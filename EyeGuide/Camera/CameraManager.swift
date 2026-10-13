@@ -141,7 +141,7 @@ final class CameraManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
         queue.async {
             guard self.session.isRunning else { DispatchQueue.main.async { completion(nil) }; return }
             let settings = AVCapturePhotoSettings()
-            settings.photoQualityPrioritization = .quality
+            settings.photoQualityPrioritization = .balanced   // 读字够用，比 quality 快近 1 秒
             self.pendingLock.lock(); self.pending[settings.uniqueID] = completion; self.pendingLock.unlock()
             self.photoOutput.capturePhoto(with: settings, delegate: self)
         }

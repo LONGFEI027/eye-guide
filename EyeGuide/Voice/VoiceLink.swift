@@ -67,7 +67,7 @@ final class VoiceLink: NSObject, ObservableObject {
             "instructions": instructions,
             "tools": Tools.schema,
             "input_audio_transcription": ["model": "gummy-realtime-v1"],
-            "turn_detection": ["type": "server_vad", "threshold": 0.2, "silence_duration_ms": 700,
+            "turn_detection": ["type": "server_vad", "threshold": 0.2, "silence_duration_ms": 500,
                                "create_response": false, "interrupt_response": false],
         ]])
         do {
@@ -207,7 +207,7 @@ final class VoiceLink: NSObject, ObservableObject {
                 handleTurn(tr.text)
             } else {
                 let gen = turnGen
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                     guard let self, self.pendingTurn, self.turnGen == gen else { return }
                     self.handleTurn("")           // 转写迟迟不来：多半是杂音
                 }
