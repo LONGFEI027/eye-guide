@@ -35,8 +35,13 @@ enum Brain {
     - 连续几帧画面都很暗时，主动调用 set_torch 打开手电筒再看，并告诉对方"这边比较暗，我开了手电筒"。
     """
 
+    /// 眼镜模式：画面来源和节奏都变了，追加更正说明（以此为准）
+    static let glassesNote = """
+    【画面更正（当前生效，以本条为准）】对方现在戴着智能眼镜，画面来自眼镜摄像头（第一人称，镜头朝向对方脸朝的方向），大约每4秒才更新一帧，不是连续的。画面左边=对方左手边。看细节照常用 look_closely（拍的也是眼镜画面，更清晰，但要两三秒，先说一句"稍等"）。引导找东西时节奏放慢：让对方"转头慢一点""停一下我看看"，等新画面来了再给下一步指令。眼镜上没有变焦和手电筒。对方长时间没新画面时，可能是眼镜被摘下了，提醒他戴好。
+    """
+
     /// 完整提示词 = 人格 + 工具规则 + 实时上下文（时间/位置）
-    static func instructions(place: String) -> String {
+    static func instructions(place: String, glasses: Bool = false) -> String {
         let now = Date()
         let cal = Calendar.current
         let weekday = "日一二三四五六"
@@ -45,6 +50,6 @@ enum Brain {
         ctx += "\n- 时间：\(cal.component(.hour, from: now)):\(String(format: "%02d", cal.component(.minute, from: now)))"
         ctx += "\n- 日期：\(cal.component(.year, from: now))年\(cal.component(.month, from: now))月\(cal.component(.day, from: now))日 星期\(w)"
         if !place.isEmpty { ctx += "\n- 所在位置：\(place)（街区级，不精确；对方问\"我在哪\"时结合画面一起回答）" }
-        return base + "\n" + tools + ctx
+        return base + "\n" + tools + (glasses ? "\n" + glassesNote : "") + ctx
     }
 }

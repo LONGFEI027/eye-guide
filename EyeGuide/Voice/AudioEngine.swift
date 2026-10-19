@@ -21,7 +21,9 @@ final class AudioEngine: ObservableObject {
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker])
+        // allowBluetooth：戴 Rokid 眼镜（= 蓝牙耳机）时，声音和麦克风走眼镜，不堵耳朵
+        try session.setCategory(.playAndRecord, mode: .voiceChat,
+                                options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
         try session.setActive(true)
 
         engine.attach(player)

@@ -1,0 +1,4 @@
+module RGCxrClient_Private {
+    header "../../RGCxrCore/Classes/RGCxrSocketProtocol.h"
+    export *
+}

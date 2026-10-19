@@ -6,13 +6,22 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F5C5C8A984418D6AA2D9192E /* Pods_EyeGuide.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3FBFD8AD20BE4BC2F26089BE /* Pods_EyeGuide.framework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
+		3FBFD8AD20BE4BC2F26089BE /* Pods_EyeGuide.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_EyeGuide.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		3FD7C48DAA378759F6CA8F93 /* Pods-EyeGuide.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-EyeGuide.release.xcconfig"; path = "Target Support Files/Pods-EyeGuide/Pods-EyeGuide.release.xcconfig"; sourceTree = "<group>"; };
+		A1614643878EC621481FA850 /* Pods-EyeGuide.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-EyeGuide.debug.xcconfig"; path = "Target Support Files/Pods-EyeGuide/Pods-EyeGuide.debug.xcconfig"; sourceTree = "<group>"; };
 		A20000000000000000000002 /* EyeGuide.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EyeGuide.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A20000000000000000000001 /* EyeGuide */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = EyeGuide;
 			sourceTree = "<group>";
 		};
@@ -23,17 +32,30 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F5C5C8A984418D6AA2D9192E /* Pods_EyeGuide.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		391B29306AF3ACF4609D4568 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				A1614643878EC621481FA850 /* Pods-EyeGuide.debug.xcconfig */,
+				3FD7C48DAA378759F6CA8F93 /* Pods-EyeGuide.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
 		A20000000000000000000004 = {
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000001 /* EyeGuide */,
 				A20000000000000000000005 /* Products */,
+				391B29306AF3ACF4609D4568 /* Pods */,
+				D037371EF126D9D8CEAEB813 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -45,6 +67,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		D037371EF126D9D8CEAEB813 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3FBFD8AD20BE4BC2F26089BE /* Pods_EyeGuide.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -52,9 +82,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A2000000000000000000000A /* Build configuration list for PBXNativeTarget "EyeGuide" */;
 			buildPhases = (
+				1C304C6818DAC072E2745C94 /* [CP] Check Pods Manifest.lock */,
 				A20000000000000000000007 /* Sources */,
 				A20000000000000000000003 /* Frameworks */,
 				A20000000000000000000008 /* Resources */,
+				89586FC1991AF7C5330607B5 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -64,8 +96,6 @@
 				A20000000000000000000001 /* EyeGuide */,
 			);
 			name = EyeGuide;
-			packageProductDependencies = (
-			);
 			productName = EyeGuide;
 			productReference = A20000000000000000000002 /* EyeGuide.app */;
 			productType = "com.apple.product-type.application";
@@ -113,6 +143,48 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		1C304C6818DAC072E2745C94 /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-EyeGuide-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
+		89586FC1991AF7C5330607B5 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-EyeGuide/Pods-EyeGuide-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-EyeGuide/Pods-EyeGuide-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-EyeGuide/Pods-EyeGuide-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A20000000000000000000007 /* Sources */ = {
@@ -177,12 +249,14 @@
 		};
 		A2000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A1614643878EC621481FA850 /* Pods-EyeGuide.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Support/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "小路";
 				INFOPLIST_KEY_NSCameraUsageDescription = "小路要用相机看见你眼前的环境，才能告诉你周围有什么";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "回答你在哪里需要你的大概位置（只到街区级别）";
@@ -206,12 +280,14 @@
 		};
 		A2000000000000000000000F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3FD7C48DAA378759F6CA8F93 /* Pods-EyeGuide.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Support/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "小路";
 				INFOPLIST_KEY_NSCameraUsageDescription = "小路要用相机看见你眼前的环境，才能告诉你周围有什么";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "回答你在哪里需要你的大概位置（只到街区级别）";

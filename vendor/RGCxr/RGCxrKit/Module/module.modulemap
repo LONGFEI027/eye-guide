@@ -1,0 +1,4 @@
+module RGCxrKit_Private {
+    header "../../RGCxrCore/Classes/RGCxrSocketProtocol.h"
+    export *
+}
