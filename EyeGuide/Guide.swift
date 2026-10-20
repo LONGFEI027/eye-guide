@@ -16,12 +16,18 @@ final class Guide: ObservableObject {
     let account = Account()
     let locator = Locator()
     let glasses = Glasses()
+    let scout = Scout()
 
     private var bag = Set<AnyCancellable>()
     private var frameTimer: Timer?
 
     init() {
         camera.onSnapshot = { [weak self] jpeg in self?.voice.sendImage(jpeg) }
+        camera.onObstacle = { [weak self] d in self?.scout.feed(d) }
+        if scout.enabled, Scout.available {
+            camera.wantsDepth = true           // 开机就带深度（configure 在 camera.start 时生效）
+            scout.setEnabled(true)
+        }
         voice.onCaption = { [weak self] t in self?.botLine = t }
         voice.onUserText = { [weak self] t in self?.userLine = t }
         voice.onToolCall = { [weak self] name, args, id, spoke in self?.tool(name, args, id, spoke) }
@@ -55,6 +61,16 @@ final class Guide: ObservableObject {
         syncFrameSource()
     }
 
+    /// 护航开关（界面按钮）：激光雷达障碍预警
+    func toggleScout() {
+        guard Scout.available else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let on = !scout.enabled
+        scout.setEnabled(on)
+        camera.setDepth(on)
+        voice.refreshInstructions(instructions())
+    }
+
     /// 眼镜开关（界面按钮）
     func toggleGlasses() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -71,7 +87,7 @@ final class Guide: ObservableObject {
     func placeChanged() { voice.refreshInstructions(instructions()) }
 
     private func instructions() -> String {
-        Brain.instructions(place: locator.place, glasses: glassesActive)
+        Brain.instructions(place: locator.place, glasses: glassesActive, scout: scout.enabled)
     }
 
     private func sourceChanged() {
@@ -115,7 +131,7 @@ final class Guide: ObservableObject {
                 glasses.takePhoto(width: 1920, height: 1080, quality: 80) { [weak self] data in
                     guard let self else { return }
                     if let data {
-                        self.inspect(jpeg: data, question: q, callId: id)
+                        self.analyze(jpeg: data, question: q, callId: id)
                     } else {
                         self.lookWithPhone(question: q, callId: id)
                     }
@@ -155,14 +171,20 @@ final class Guide: ObservableObject {
                 self.voice.toolResult(callId: callId, output: "拍照失败了，如实告诉对方没看成，请他举稳手机稍后再试", speak: true)
                 return
             }
-            self.inspect(jpeg: jpeg, question: question, callId: callId)
+            self.analyze(jpeg: jpeg, question: question, callId: callId)
         }
     }
 
-    /// 把一张 JPEG 交给视觉模型细看，结果交还给她
-    private func inspect(jpeg: Data, question: String, callId: String) {
+    /// 细看一张照片：读字类问题先走本地 OCR 快路径（亚秒级），其余交云端视觉模型
+    private func analyze(jpeg: Data, question: String, callId: String) {
         Task { @MainActor in
             defer { self.looking = false }
+            if OCR.isReadingQuestion(question), let text = await OCR.read(jpeg), text.count >= 6 {
+                self.voice.toolResult(callId: callId,
+                    output: "【本地文字识别原文，逐字准确】\n\(text)\n（按对方的问题挑相关内容念，忽略排版噪声；原文里没有对方要的信息就直说没看到）",
+                    speak: true)
+                return
+            }
             let answer = await VisionAPI.inspect(jpeg, question: question)
                 ?? "网络不太好没看成，如实告诉对方，请他稍后再问一次"
             self.voice.toolResult(callId: callId, output: answer, speak: true)

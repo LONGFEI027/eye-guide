@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 眼镜端相机探针：验证第三方 APK 在 Rokid Glasses（YodaOS-Sprite）上能否连续取相机帧。
+     targetSdk=26：新系统拒装 targetSdk<23 的包（第一版 22 疑似因此 install 失败）；
+     相机权限改为启动时运行时申请。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="asia.feizhu.glassprobe"
+    android:versionCode="2"
+    android:versionName="0.2">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="26" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <application android:label="GlassProbe">
+        <activity android:name=".ProbeActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

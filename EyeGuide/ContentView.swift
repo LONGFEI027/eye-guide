@@ -6,7 +6,7 @@ struct ContentView: View {
 
     var body: some View {
         RootView(guide: guide, voice: guide.voice, camera: guide.camera,
-                 account: guide.account, locator: guide.locator, glasses: guide.glasses)
+                 account: guide.account, locator: guide.locator, glasses: guide.glasses, scout: guide.scout)
     }
 }
 
@@ -20,6 +20,7 @@ private struct RootView: View {
     @ObservedObject var account: Account
     @ObservedObject var locator: Locator
     @ObservedObject var glasses: Glasses
+    @ObservedObject var scout: Scout
 
     var body: some View {
         ZStack {
@@ -34,6 +35,7 @@ private struct RootView: View {
                 HStack(alignment: .top) {
                     captions
                     Spacer(minLength: 12)
+                    if Scout.available { scoutButton }
                     glassesButton
                 }
                 if let img = glasses.lastPhoto, guide.glassesActive {
@@ -86,6 +88,42 @@ private struct RootView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 6)
         .accessibilityHidden(true)   // 内容她都会念出来，VoiceOver 不用重复读字幕
+    }
+
+    /// 护航开关：激光雷达障碍预警。灰=关，绿=畅通，橙=注意（显示距离），红=危险
+    private var scoutButton: some View {
+        Button(action: guide.toggleScout) {
+            VStack(spacing: 2) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 22, weight: .bold))
+                Text(scoutLabel)
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(scoutColor, in: RoundedRectangle(cornerRadius: 12))
+        }
+        .accessibilityLabel(scout.enabled ? "关闭护航" : "开启护航")
+        .accessibilityHint("护航用激光雷达盯着你正前方，有障碍物靠近会震动提醒，越近震得越急")
+    }
+
+    private var scoutLabel: String {
+        guard scout.enabled else { return "护航" }
+        switch scout.zone {
+        case .danger: return "很近!"
+        case .warn: return String(format: "%.1f米", scout.distance)
+        case .clear: return "畅通"
+        case .off: return "护航"
+        }
+    }
+
+    private var scoutColor: Color {
+        guard scout.enabled else { return .black.opacity(0.45) }
+        switch scout.zone {
+        case .danger: return .red.opacity(0.85)
+        case .warn: return .orange.opacity(0.85)
+        default: return .green.opacity(0.6)
+        }
     }
 
     /// 眼镜开关（右上角）：灰=关，黄=连接中/等授权，绿=在用眼镜看
