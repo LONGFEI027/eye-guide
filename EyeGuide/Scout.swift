@@ -46,6 +46,8 @@ final class Scout: ObservableObject {
     func setEnabled(_ on: Bool) {
         enabled = on
         if on {
+            // iOS 默认在麦克风录音期间屏蔽触感震动（通话中测=完全不震），显式放行
+            try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(true)
             haptic.prepare()
             zone = .clear
             say("护航已开启")
@@ -65,6 +67,7 @@ final class Scout: ObservableObject {
         case .warn: interval = 0.55
         default: return
         }
+        haptic.prepare()
         hapticTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled else { return }

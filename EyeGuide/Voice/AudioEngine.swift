@@ -21,9 +21,11 @@ final class AudioEngine: ObservableObject {
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()
-        // allowBluetooth：戴 Rokid 眼镜（= 蓝牙耳机）时，声音和麦克风走眼镜，不堵耳朵
+        // allowBluetooth：戴蓝牙耳机（骨传导/气传导）时，声音和麦克风走耳机，不堵耳朵
         try session.setCategory(.playAndRecord, mode: .voiceChat,
                                 options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+        // 不加这句，通话录音期间系统会屏蔽护航的触感震动
+        try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true)
 
         engine.attach(player)
