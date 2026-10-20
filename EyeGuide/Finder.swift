@@ -17,6 +17,8 @@ final class Finder {
         ("杯", ["cup", "mug", "glass"]), ("瓶", ["bottle"]), ("碗", ["bowl"]), ("盘", ["plate", "dish"]),
         ("包", ["backpack", "handbag", "bag"]), ("鞋", ["shoe", "boot", "sneaker", "footwear"]),
         ("伞", ["umbrella"]), ("书", ["book"]), ("灯", ["lamp", "chandelier"]), ("剪刀", ["scissors"]),
+        ("鼠标", ["mouse"]), ("键盘", ["keyboard"]), ("显示器", ["monitor", "display", "screen"]),
+        ("耳机", ["headphone", "earphone", "headset"]),
         ("楼梯", ["stair"]), ("猫", ["cat"]), ("狗", ["dog"]), ("花", ["flower"]), ("植物", ["plant"]),
         ("车", ["car", "vehicle", "truck", "bus"]),
     ]
@@ -52,15 +54,27 @@ final class Finder {
         var best: Hit?
         for (dir, rect) in windows {
             guard let crop = cg.cropping(to: rect) else { continue }
-            let req = VNClassifyImageRequest()
-            try? VNImageRequestHandler(cgImage: crop, options: [:]).perform([req])
-            for obs in req.results ?? [] where obs.confidence > 0.25 {
-                let id = obs.identifier.lowercased()
-                guard keys.contains(where: { id.contains($0) }) else { continue }
-                if best == nil || obs.confidence > best!.confidence {
-                    best = Hit(direction: dir, confidence: obs.confidence)
-                }
+            // 阈值 0.15：真机校准（2026-10-21，真实照片上命中词普遍 0.2~0.35，裁窗还会稀释）
+            if let c = match(crop, over: 0.15), best == nil || c > best!.confidence {
+                best = Hit(direction: dir, confidence: c)
             }
+        }
+        if best == nil, let c = match(cg, over: 0.2) {
+            // 整幅命中但窗口没定出方向：先告知在附近，让对方慢慢扫
+            best = Hit(direction: "正前方一带，慢慢转一下我再确认", confidence: c)
+        }
+        return best
+    }
+
+    /// 一块图里找目标词，返回最高置信度
+    private func match(_ image: CGImage, over threshold: Float) -> Float? {
+        let req = VNClassifyImageRequest()
+        try? VNImageRequestHandler(cgImage: image, options: [:]).perform([req])
+        var best: Float?
+        for obs in req.results ?? [] where obs.confidence > threshold {
+            let id = obs.identifier.lowercased()
+            guard keys.contains(where: { id.contains($0) }) else { continue }
+            if best == nil || obs.confidence > best! { best = obs.confidence }
         }
         return best
     }
