@@ -26,9 +26,36 @@ enum Brain {
     【系统事件】开头是【系统事件】的消息来自App程序（不是对方说的话），需要回应时简短说一句。
     """
 
+    /// 各工作模式的行为说明（随 set_mode 切换注入）
+    static func modeNote(_ mode: GuideMode, target: String?, localDetect: Bool) -> String {
+        switch mode {
+        case .chat:
+            return ""
+        case .walk:
+            return """
+            【行走模式·生效中】你现在是安静的护送员，默认闭嘴。只有画面里出现这些才主动说一句（不超过12个字，方位用钟面）：路口和转弯、门和电梯、台阶坡道、胸口高度的悬挂障碍、迎面来的人、红绿灯。看不清或不确定的不说，绝不猜。地面细节靠盲杖，近距离障碍的震动提醒归App的雷达管，你别重复。对方说"到了""停下"就调用 set_mode 切回 chat。
+            """
+        case .read:
+            return """
+            【读字模式·生效中】App 正在本地即时朗读镜头里的文字（不经过你），你保持安静，不要跟着念。对方提问时才回答；要看小字或远处的牌子就用 look_closely。对方说"不读了""好了"就调用 set_mode 切回 chat。
+            """
+        case .find:
+            let t = target ?? "目标"
+            if localDetect {
+                return """
+                【找东西模式·目标：\(t)】App 正在本地逐帧检测目标，检测到会直接用语音报方向（十点/正前方/两点），你保持安静等它。对方问进展时，让他举稳手机慢慢原地转一圈。App报过方向、对方走近之后，你用画面确认最后一步，比如"就在你正前方一步，台面上"。找到了或对方说算了，调用 set_mode 切回 chat。
+                """
+            } else {
+                return """
+                【找东西模式·目标：\(t)】这个目标App本地检测不认识，由你来找：盯着每秒的画面，看到疑似目标就用钟面方向+步数引导，一次一句；让对方慢慢转身扫视，画面糊就让他停一下。不确定就说"再转慢一点我看看"，绝不瞎指。找到了或对方说算了，调用 set_mode 切回 chat。
+                """
+            }
+        }
+    }
+
     /// 工具使用规则
     static let tools = """
-    【工具的铁律】你有三个工具：look_closely（拍一张高清照片仔细看，比实时画面清楚得多）、set_zoom（切换镜头远近）、set_torch（手电筒）。
+    【工具的铁律】你有四个工具：look_closely（拍一张高清照片仔细看，比实时画面清楚得多）、set_zoom（切换镜头远近）、set_torch（手电筒）、set_mode（切换工作模式：对方说"陪我走路"用walk、"帮我读字"用read、"帮我找XX"用find并填target、"退出/到了"用chat）。
     - 凡是读文字、认标牌、看远处细节，一律先调用 look_closely，拿到结果再回答，不要凭实时画面硬读——实时画面是压缩过的，小字看不清，硬读会读错。
     - 调用 look_closely 前可以说一句"稍等，我仔细看一下"；调用后等结果再开口，按结果说，结果说没看清就如实告诉对方。
     - 远处的东西先 set_zoom 到 2 或 3 拉近，看完记得调回 1；找路和描述环境用 1 或 0.5。
@@ -40,8 +67,8 @@ enum Brain {
     【护航已开启】手机的激光雷达在本地负责障碍预警：靠近障碍时 App 自己会震动、自己说"前方几米有障碍"，这不归你管，你不要重复报障碍。注意它只看胸口高度的正前方，台阶、坑、地面落差它看不见——对方问路况时，提醒一句"脚下还是以盲杖为准"。对方问"前面离我多远"时你可以结合画面回答。
     """
 
-    /// 完整提示词 = 人格 + 工具规则 + 实时上下文（时间/位置）
-    static func instructions(place: String, scout: Bool = false) -> String {
+    /// 完整提示词 = 人格 + 工具规则 + 模式说明 + 实时上下文（时间/位置）
+    static func instructions(place: String, scout: Bool = false, extra: String = "") -> String {
         let now = Date()
         let cal = Calendar.current
         let weekday = "日一二三四五六"
@@ -50,6 +77,6 @@ enum Brain {
         ctx += "\n- 时间：\(cal.component(.hour, from: now)):\(String(format: "%02d", cal.component(.minute, from: now)))"
         ctx += "\n- 日期：\(cal.component(.year, from: now))年\(cal.component(.month, from: now))月\(cal.component(.day, from: now))日 星期\(w)"
         if !place.isEmpty { ctx += "\n- 所在位置：\(place)（街区级，不精确；对方问\"我在哪\"时结合画面一起回答）" }
-        return base + "\n" + tools + (scout ? "\n" + scoutNote : "") + ctx
+        return base + "\n" + tools + (scout ? "\n" + scoutNote : "") + (extra.isEmpty ? "" : "\n" + extra) + ctx
     }
 }

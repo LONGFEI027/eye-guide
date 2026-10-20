@@ -1,6 +1,8 @@
 import Foundation
 import UIKit
 import AVFoundation
+import CoreHaptics
+import AudioToolbox
 
 /// 护航：激光雷达障碍预警（本地安全层，完全不经过大模型）。
 /// 设计仿倒车雷达：距离越近震动越密；跨档时用系统 TTS 说一句很短的话。
@@ -16,11 +18,37 @@ final class Scout: ObservableObject {
     }
     static let available = CameraManager.lidarAvailable
 
-    private let haptic = UIImpactFeedbackGenerator(style: .heavy)
+    private var hapticEngine: CHHapticEngine?
     private let speech = AVSpeechSynthesizer()
     private var hapticTimer: Timer?
     private var lastSpoke = Date.distantPast
     private var lastZoneChange = Date.distantPast
+
+    /// CoreHaptics 引擎（比 UIFeedbackGenerator 可靠：不受"系统触感"开关限制）
+    private func ensureEngine() {
+        guard CHHapticEngine.capabilitiesForHardware().supportsHaptics, hapticEngine == nil else { return }
+        let e = try? CHHapticEngine()
+        e?.playsHapticsOnly = true
+        e?.resetHandler = { [weak e] in try? e?.start() }
+        try? e?.start()
+        hapticEngine = e
+    }
+
+    /// 单次脉冲：CoreHaptics 优先，不行就退到老式整机震动（最强兜底，所有机器都会动）
+    private func pulse(_ intensity: Float) {
+        if let e = hapticEngine {
+            let ev = CHHapticEvent(eventType: .hapticTransient, parameters: [
+                CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
+                CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.7),
+            ], relativeTime: 0)
+            if let pat = try? CHHapticPattern(events: [ev], parameters: []),
+               let p = try? e.makePlayer(with: pat) {
+                try? e.start()
+                if (try? p.start(atTime: CHHapticTimeImmediate)) != nil { return }
+            }
+        }
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+    }
 
     /// 深度流入口（CameraManager.onObstacle，约 10Hz，主线程）
     func feed(_ d: Float) {
@@ -48,9 +76,15 @@ final class Scout: ObservableObject {
         if on {
             // iOS 默认在麦克风录音期间屏蔽触感震动（通话中测=完全不震），显式放行
             try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(true)
-            haptic.prepare()
+            ensureEngine()
             zone = .clear
             say("护航已开启")
+            // 开启即连震三下：当场验证这台手机的震动通路
+            for i in 0..<3 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 * Double(i)) { [weak self] in
+                    self?.pulse(1.0)
+                }
+            }
         } else {
             zone = .off
             hapticTimer?.invalidate(); hapticTimer = nil
@@ -67,11 +101,11 @@ final class Scout: ObservableObject {
         case .warn: interval = 0.55
         default: return
         }
-        haptic.prepare()
+        ensureEngine()
         hapticTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled else { return }
-                self.haptic.impactOccurred(intensity: self.zone == .danger ? 1.0 : 0.7)
+                self.pulse(self.zone == .danger ? 1.0 : 0.7)
             }
         }
     }

@@ -15,6 +15,11 @@ enum Tools {
         fn("set_torch",
            "手电筒：画面太暗看不清时打开，离开暗处记得关掉",
            ["on": ["type": "boolean"]], required: ["on"]),
+        fn("set_mode",
+           "切换工作模式。walk=行走护送（对方说'陪我走/带我走'时用，你变成安静的护送员，只报重要路况）；read=读字（对方说'帮我读/扫一下文字'时用，App会本地即时朗读看到的文字）；find=找东西（对方说'帮我找XX'时用，必须填target，App本地检测到会直接报方向）；chat=回到自由问答（对方说'到了/不找了/退出'时用）。",
+           ["mode": ["type": "string", "enum": ["walk", "read", "find", "chat"]],
+            "target": ["type": "string", "description": "find模式要找的东西，比如'椅子'、'我的水杯'"]],
+           required: ["mode"]),
     ]
 
     private static func fn(_ name: String, _ desc: String, _ props: [String: Any], required: [String] = []) -> [String: Any] {
@@ -36,5 +41,13 @@ enum Tools {
         if let b = v as? Bool { return b }
         let s = "\(v ?? "")".lowercased()
         return s.contains("true") || s.contains("on") || s.contains("开") || s == "1"
+    }
+
+    static func mode(_ v: Any?) -> GuideMode {
+        let s = "\(v ?? "")".lowercased()
+        if s.contains("walk") || s.contains("行走") || s.contains("走") { return .walk }
+        if s.contains("read") || s.contains("读") { return .read }
+        if s.contains("find") || s.contains("找") { return .find }
+        return .chat
     }
 }

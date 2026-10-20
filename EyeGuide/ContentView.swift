@@ -34,6 +34,14 @@ private struct RootView: View {
                 HStack(alignment: .top) {
                     captions
                     Spacer(minLength: 12)
+                    if voice.live && guide.mode != .chat {
+                        Text(guide.mode.name + "模式")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10).padding(.vertical, 8)
+                            .background(.blue.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+                            .accessibilityLabel("当前是\(guide.mode.name)模式")
+                    }
                     if Scout.available { scoutButton }
                 }
                 Spacer()

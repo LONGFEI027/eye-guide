@@ -26,6 +26,20 @@ enum OCR {
         }
     }
 
+    /// 两段文字的相似度（字二元组重叠率）——读字模式去重：同一块牌子别反复念
+    static func similar(_ a: String, _ b: String) -> Double {
+        func grams(_ s: String) -> Set<String> {
+            let cs = Array(s.filter { !$0.isWhitespace && !$0.isPunctuation })
+            guard cs.count > 1 else { return [] }
+            var g = Set<String>()
+            for i in 0..<(cs.count - 1) { g.insert(String(cs[i]) + String(cs[i + 1])) }
+            return g
+        }
+        let A = grams(a), B = grams(b)
+        guard !A.isEmpty, !B.isEmpty else { return 0 }
+        return Double(A.intersection(B).count) / Double(min(A.count, B.count))
+    }
+
     /// 问题是不是"读字类"（快路径只在这类问题上启用，免得把海报文字当成环境描述）
     static func isReadingQuestion(_ q: String) -> Bool {
         let keys = ["写", "字", "牌", "号", "线", "标", "读", "价", "名", "门", "说明", "几路", "站", "单", "票", "日期", "电话"]

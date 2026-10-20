@@ -23,6 +23,8 @@ final class CameraManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
     /// 给模型看的实时帧（主线程，每秒 1 张，仅在 wantsSnapshots 时）
     var onSnapshot: ((Data) -> Void)?
     var wantsSnapshots = false
+    /// 实时帧宽度（读字模式提到 960 看清小字，默认 640 省流量）
+    var snapshotWidth: CGFloat = 640
 
     let session = AVCaptureSession()
     private let photoOutput = AVCapturePhotoOutput()
@@ -196,7 +198,7 @@ final class CameraManager: NSObject, ObservableObject, AVCapturePhotoCaptureDele
         guard wantsSnapshots, now.timeIntervalSince(lastSnapshot) > 1.0,
               let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastSnapshot = now
-        guard let snap = jpeg(CIImage(cvPixelBuffer: pb), maxWidth: 640) else { return }
+        guard let snap = jpeg(CIImage(cvPixelBuffer: pb), maxWidth: snapshotWidth) else { return }
         DispatchQueue.main.async { self.onSnapshot?(snap) }
     }
 
