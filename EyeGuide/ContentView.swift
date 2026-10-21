@@ -69,8 +69,12 @@ private struct RootView: View {
             Task { await account.check() }
             guide.startBackend()                             // 按护航状态起对应相机底座
             UIApplication.shared.isIdleTimerDisabled = true  // 出门导览不许锁屏
-            // 盲人入口：打开 App 即自动接通（双击图标=一步到位；登录弹窗在时不抢）
+            // 盲人入口：打开 App 即自动接通（双击图标=一步到位；登录弹窗在时不抢）。
+            // 快速重启时服务器上旧会话可能没断干净导致首连失败，6 秒后自动重试一次
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if !voice.live, !account.needLogin { guide.toggleCall() }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 7.5) {
                 if !voice.live, !account.needLogin { guide.toggleCall() }
             }
             SelfTest.run(guide)   // 仅 DEBUG：真机自检，结果写 Documents/selftest.json
