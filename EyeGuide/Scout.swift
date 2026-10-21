@@ -70,7 +70,13 @@ final class Scout: ObservableObject {
     private let beeper = Beeper()
     private var hapticTimer: Timer?
     private var beepTimer: Timer?
+    private var beepRate: Double = 0
     private var lastSpoke = Date.distantPast
+    // 静止抑制：持续受阻但人没动（比如站在桌前），4秒后降为每3秒一声轻提醒，动了立刻恢复
+    @Published var holding = false
+    private var refDistance: Float = -1
+    private var stillSince: Date?
+    private var holdTimer: Timer?
 
     // MARK: - 主入口：Rover 输出（约6Hz）
 
@@ -79,13 +85,55 @@ final class Scout: ObservableObject {
         distance = o.blocked ? o.closest : 0
         detourDeg = o.detourDeg
         let newZone: Zone = o.blocked ? (o.closest < 1.0 ? .danger : .warn) : .clear
+
+        // 静止判定：受阻且距离基本不变 → 进入轻提醒；距离变化>15cm → 恢复
+        if o.blocked {
+            if refDistance < 0 || abs(o.closest - refDistance) > 0.15 {
+                refDistance = o.closest
+                stillSince = Date()
+                if holding { exitHold() }
+            } else if !holding, let s = stillSince, Date().timeIntervalSince(s) > 4 {
+                enterHold()
+            }
+        } else {
+            refDistance = -1
+            stillSince = nil
+            if holding { exitHold() }
+        }
+
         if newZone != zone {
             zone = newZone
-            announce(newZone)
+            if !holding {
+                announce(newZone)
+                retuneHaptics()
+                retuneBeeps(force: true)
+            }
+        } else if o.blocked, !holding {
+            retuneBeeps(force: false)   // 距离变了才会真正重调，不会每帧轰炸
+        }
+    }
+
+    private func enterHold() {
+        holding = true
+        hapticTimer?.invalidate(); hapticTimer = nil
+        beepTimer?.invalidate(); beepTimer = nil
+        beepRate = 0
+        say("前面一直挡着，你动的时候我再细报")
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.enabled, self.holding else { return }
+                self.pulse(0.6)
+                self.beeper.tick(pan: sin(self.detourDeg * .pi / 180))
+            }
+        }
+    }
+
+    private func exitHold() {
+        holding = false
+        holdTimer?.invalidate(); holdTimer = nil
+        if zone == .warn || zone == .danger {
             retuneHaptics()
-            retuneBeeps()
-        } else if o.blocked {
-            retuneBeeps()   // 距离在变，滴滴节奏跟着变
+            retuneBeeps(force: true)
         }
     }
 
@@ -106,6 +154,10 @@ final class Scout: ObservableObject {
             zone = .off
             hapticTimer?.invalidate(); hapticTimer = nil
             beepTimer?.invalidate(); beepTimer = nil
+            holdTimer?.invalidate(); holdTimer = nil
+            holding = false
+            refDistance = -1; stillSince = nil
+            beepRate = 0
             beeper.stopEngine()
             say("护航已关闭")
         }
@@ -159,18 +211,24 @@ final class Scout: ObservableObject {
 
     // MARK: - 滴滴声（Mobilio：节奏=距离，声像=绕行方向）
 
-    private func retuneBeeps() {
-        beepTimer?.invalidate(); beepTimer = nil
-        guard zone == .warn || zone == .danger else { return }
+    private func retuneBeeps(force: Bool) {
+        guard zone == .warn || zone == .danger else {
+            beepTimer?.invalidate(); beepTimer = nil; beepRate = 0
+            return
+        }
         // 1.5m→2Hz，0.2m→11.7Hz（Mobilio 参数）
         let d = max(0.2, min(Rover.distanceToObstacle, distance))
         let t = Double((d - 0.2) / (Rover.distanceToObstacle - 0.2))
         let rate = 11.72 - t * 9.72
-        let pan = sin(detourDeg * .pi / 180)
-        beeper.tick(pan: pan)
+        // 频率没明显变化就不动计时器——否则 6Hz 的雷达刷新会把滴滴变成持续轰炸
+        guard force || beepTimer == nil || abs(rate - beepRate) > 0.8 else { return }
+        beepRate = rate
+        beepTimer?.invalidate()
+        if force { beeper.tick(pan: sin(detourDeg * .pi / 180)) }   // 只在进档时立即响一声
         beepTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / rate, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.enabled, self.zone == .warn || self.zone == .danger else { return }
+                guard let self, self.enabled, !self.holding,
+                      self.zone == .warn || self.zone == .danger else { return }
                 self.beeper.tick(pan: sin(self.detourDeg * .pi / 180))
             }
         }

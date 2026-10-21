@@ -8,6 +8,9 @@ import Vision
 enum SelfTest {
     static func run(_ g: Guide) {
         #if DEBUG
+        // 只在带 --selftest 参数启动时运行（Mac 上 devicectl 触发）；日常打开 App 不跑，
+        // 免得自检的护航开关语音、三连震、大模型对话打扰真实使用
+        guard ProcessInfo.processInfo.arguments.contains("--selftest") else { return }
         Task { @MainActor in
             var r: [String: Any] = ["at": ISO8601DateFormatter().string(from: Date())]
 
