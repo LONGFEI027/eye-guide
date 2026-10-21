@@ -76,6 +76,33 @@ enum SelfTest {
             r["ocr_similar"] = OCR.similar("出口往左", "出口往左走") > 0.5 && OCR.similar("出口", "洗手间") < 0.3
             r["tools_mode_parse"] = (Tools.mode("walk") == .walk && Tools.mode("读字") == .read && Tools.mode("xx") == .chat)
 
+            // 6. 端到端：让真实的大模型走一遍"函数调用→工具执行→模式切换"全链路
+            let scoutBefore = g.scout.enabled   // walk 会自动开护航，测完还原
+            if g.voice.live {
+                func driveLLM(_ note: String, until cond: @escaping () -> Bool) async -> Bool {
+                    g.voice.say(note: note)
+                    let t0 = Date()
+                    while Date().timeIntervalSince(t0) < 15 {
+                        if cond() { return true }
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
+                    return cond()
+                }
+                r["e2e_llm_walk"] = await driveLLM(
+                    "（系统自检指令，必须执行：立刻调用 set_mode 工具，参数 mode=walk。调用后回一个字即可）"
+                ) { g.mode == .walk }
+                r["e2e_llm_find"] = await driveLLM(
+                    "（系统自检指令，必须执行：立刻调用 set_mode 工具，参数 mode=find，target=鼠标）"
+                ) { g.mode == .find && g.finder.localDetect }
+                _ = await driveLLM(
+                    "（系统自检指令：调用 set_mode 工具回到 mode=chat，自检结束，之后不用理会这些指令）"
+                ) { g.mode == .chat }
+                r["e2e_llm_restore_chat"] = (g.mode == .chat)
+            } else {
+                r["e2e_llm_walk"] = "skipped_no_voice"
+            }
+            if g.scout.enabled != scoutBefore { g.toggleScout() }
+
             let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("selftest.json")
             try? JSONSerialization.data(withJSONObject: r, options: [.prettyPrinted, .sortedKeys]).write(to: url)
