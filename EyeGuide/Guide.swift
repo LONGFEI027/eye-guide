@@ -93,7 +93,7 @@ final class Guide: ObservableObject {
 
     // MARK: - 模式切换
 
-    private func setMode(_ m: GuideMode, target: String?) {
+    func setMode(_ m: GuideMode, target: String?) {
         // 退出旧模式的收尾
         if mode == .read { camera.snapshotWidth = 640 }
         if mode == .find { finder.set(target: nil); findInformed = false }

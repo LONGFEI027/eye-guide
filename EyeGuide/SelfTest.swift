@@ -1,0 +1,81 @@
+import Foundation
+import UIKit
+import Vision
+
+/// 开发用真机自检（仅 DEBUG）：启动后自动把本地关键链路各跑一遍，
+/// 结果写 Documents/selftest.json，Mac 上用 devicectl 取回核对。
+/// 只测机器可测的：相机、激光雷达距离流、真机 OCR、分类器、模式状态机、语音会话是否接通。
+enum SelfTest {
+    static func run(_ g: Guide) {
+        #if DEBUG
+        Task { @MainActor in
+            var r: [String: Any] = ["at": ISO8601DateFormatter().string(from: Date())]
+
+            // 1. 相机 & 语音会话（等自动接通流程走完）
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            r["camera_running"] = g.camera.isRunning
+            r["voice_live"] = g.voice.live
+
+            // 2. 激光雷达：等一个真实距离读数（临时接管回调，测完还原）
+            if Scout.available {
+                let hadDepth = g.camera.wantsDepth
+                var seen: Float = -1
+                let old = g.camera.onObstacle
+                g.camera.onObstacle = { d in seen = d; old?(d) }
+                if !hadDepth { g.camera.setDepth(true) }
+                let t0 = Date()
+                while Date().timeIntervalSince(t0) < 6, seen < 0 {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+                g.camera.onObstacle = old
+                if !hadDepth { g.camera.setDepth(false) }
+                r["lidar_distance_m"] = seen < 0 ? "no_data" : String(format: "%.2f", seen)
+            } else {
+                r["lidar_distance_m"] = "no_lidar"
+            }
+
+            // 3. 真拍一张：OCR + 分类器（看它此刻真实看到什么）
+            let photo: Data? = await withCheckedContinuation { c in
+                g.camera.capture { c.resume(returning: $0) }
+            }
+            if let p = photo, let jpeg = CameraManager.downscale(p, maxWidth: 1280) {
+                r["photo_bytes"] = jpeg.count
+                r["ocr_on_device"] = await OCR.read(jpeg) ?? "(画面里无文字)"
+                if let cgi = UIImage(data: jpeg)?.cgImage {
+                    let req = VNClassifyImageRequest()
+                    try? VNImageRequestHandler(cgImage: cgi, options: [:]).perform([req])
+                    r["classifier_top"] = (req.results ?? []).prefix(8)
+                        .map { "\($0.identifier):\(String(format: "%.2f", $0.confidence))" }
+                }
+            } else {
+                r["photo_bytes"] = 0
+            }
+
+            // 4. 模式状态机（走一圈再还原；记住护航原始状态）
+            let scoutWas = g.scout.enabled
+            g.setMode(.read, target: nil)
+            r["mode_read"] = (g.mode == .read && g.camera.snapshotWidth == 960)
+            g.setMode(.find, target: "鼠标")
+            r["mode_find_local"] = (g.mode == .find && g.finder.localDetect)
+            g.setMode(.find, target: "遥控器")
+            r["mode_find_fallback"] = (g.mode == .find && g.finder.localDetect)   // 词表有"遥控"
+            g.setMode(.walk, target: nil)
+            r["mode_walk_scout_auto"] = (g.mode == .walk && (!Scout.available || g.scout.enabled))
+            g.setMode(.chat, target: nil)
+            r["mode_chat_restore"] = (g.mode == .chat && g.camera.snapshotWidth == 640)
+            if g.scout.enabled != scoutWas {
+                g.scout.setEnabled(scoutWas)
+                g.camera.setDepth(scoutWas)
+            }
+
+            // 5. 纯逻辑抽查
+            r["ocr_similar"] = OCR.similar("出口往左", "出口往左走") > 0.5 && OCR.similar("出口", "洗手间") < 0.3
+            r["tools_mode_parse"] = (Tools.mode("walk") == .walk && Tools.mode("读字") == .read && Tools.mode("xx") == .chat)
+
+            let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("selftest.json")
+            try? JSONSerialization.data(withJSONObject: r, options: [.prettyPrinted, .sortedKeys]).write(to: url)
+        }
+        #endif
+    }
+}

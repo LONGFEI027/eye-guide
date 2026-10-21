@@ -60,6 +60,7 @@ private struct RootView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 if !voice.live, !account.needLogin { guide.toggleCall() }
             }
+            SelfTest.run(guide)   // 仅 DEBUG：真机自检，结果写 Documents/selftest.json
         }
         .onChange(of: locator.place) { _, _ in guide.placeChanged() }
         .sheet(isPresented: $account.needLogin) { LoginView(account: account) }
