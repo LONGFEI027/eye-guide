@@ -7,6 +7,8 @@ import Combine
 /// 找东西=本地分类器报方向（Finder）。模式（聊天/行走/读字/找东西）由她调 set_mode 切换。
 @MainActor
 final class Guide: ObservableObject {
+    static let shared = Guide()      // Siri 捷径（Intents.swift）也要控制它，单例
+
     @Published var userLine = ""     // 你刚说的（转写）
     @Published var botLine = ""      // 她正在说的（字幕）
     @Published var looking = false   // 正在拍照细看
@@ -118,10 +120,12 @@ final class Guide: ObservableObject {
     // MARK: - 本地通道（读字 / 找东西，每秒一帧随 onSnapshot 进来）
 
     private func readTick(_ jpeg: Data) {
+        guard !voice.isBusy else { return }   // 小路正在说话：本地播报让路，下一帧再来
         guard Date().timeIntervalSince(lastReadAt) > 2 else { return }
         lastReadAt = Date()
         Task { @MainActor in
-            guard self.mode == .read, let text = await OCR.read(jpeg), text.count >= 4 else { return }
+            guard self.mode == .read, !self.voice.isBusy,
+                  let text = await OCR.read(jpeg), text.count >= 4 else { return }
             guard OCR.similar(text, self.lastRead) < 0.6 else { return }   // 同一块牌子不重复念
             self.lastRead = text
             LocalVoice.say(String(text.prefix(60)))
@@ -129,6 +133,7 @@ final class Guide: ObservableObject {
     }
 
     private func findTick(_ jpeg: Data) {
+        guard !voice.isBusy else { return }   // 小路正在说话：本地播报让路，不叠音
         guard finder.localDetect, Date().timeIntervalSince(lastFindCallout) > 2.5 else { return }
         let target = finder.target ?? "目标"
         Task.detached { [weak self] in

@@ -18,15 +18,21 @@ enum GuideMode: String {
     }
 }
 
-/// 本地即时播报（系统 TTS，和大模型的声音各管各的；读字/找东西两个本地通道用它）
+/// 本地即时播报（系统 TTS，和大模型的声音各管各的；护航/读字/找东西三个本地通道共用，
+/// 新话顶掉旧话，天然不自我重叠）。音色挑系统里音质最好的中文嗓子。
 @MainActor
 enum LocalVoice {
     private static let synth = AVSpeechSynthesizer()
+    private static let voice: AVSpeechSynthesisVoice? = {
+        let zh = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("zh") }
+        return zh.first { $0.quality == .premium } ?? zh.first { $0.quality == .enhanced }
+            ?? AVSpeechSynthesisVoice(language: "zh-CN")
+    }()
 
     static func say(_ text: String) {
         synth.stopSpeaking(at: .immediate)
         let u = AVSpeechUtterance(string: text)
-        u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        u.voice = voice
         u.rate = 0.55
         synth.speak(u)
     }

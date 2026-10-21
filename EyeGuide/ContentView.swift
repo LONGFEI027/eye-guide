@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct ContentView: View {
-    @StateObject private var guide = Guide()
+    @ObservedObject private var guide = Guide.shared   // 单例：Siri 捷径和界面控制同一个大脑
 
     var body: some View {
         RootView(guide: guide, voice: guide.voice, camera: guide.camera,
@@ -56,6 +56,10 @@ private struct RootView: View {
             Task { await account.check() }
             camera.start()                                   // 提前取景，接通就有画面
             UIApplication.shared.isIdleTimerDisabled = true  // 出门导览不许锁屏
+            // 盲人入口：打开 App 即自动接通（双击图标=一步到位；登录弹窗在时不抢）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if !voice.live, !account.needLogin { guide.toggleCall() }
+            }
         }
         .onChange(of: locator.place) { _, _ in guide.placeChanged() }
         .sheet(isPresented: $account.needLogin) { LoginView(account: account) }

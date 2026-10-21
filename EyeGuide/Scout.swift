@@ -19,7 +19,6 @@ final class Scout: ObservableObject {
     static let available = CameraManager.lidarAvailable
 
     private var hapticEngine: CHHapticEngine?
-    private let speech = AVSpeechSynthesizer()
     private var hapticTimer: Timer?
     private var lastSpoke = Date.distantPast
     private var lastZoneChange = Date.distantPast
@@ -92,21 +91,24 @@ final class Scout: ObservableObject {
         }
     }
 
-    /// 震动节奏：危险 0.18s 一下，注意 0.55s 一下，畅通不震
+    /// 震动策略（2026-10-21 按用户实测改）：手机挂胸前，持续震太烦——
+    /// 注意档只在进档时震两下提示；只有危险档（1米内）才持续密震（安全优先）。
     private func retune() {
         hapticTimer?.invalidate(); hapticTimer = nil
-        let interval: TimeInterval
-        switch zone {
-        case .danger: interval = 0.18
-        case .warn: interval = 0.55
-        default: return
-        }
         ensureEngine()
-        hapticTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.enabled else { return }
-                self.pulse(self.zone == .danger ? 1.0 : 0.7)
+        switch zone {
+        case .danger:
+            hapticTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self, self.enabled, self.zone == .danger else { return }
+                    self.pulse(1.0)
+                }
             }
+        case .warn:
+            pulse(0.8)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.pulse(0.8) }
+        default:
+            break
         }
     }
 
@@ -123,10 +125,6 @@ final class Scout: ObservableObject {
 
     private func say(_ text: String) {
         lastSpoke = Date()
-        speech.stopSpeaking(at: .immediate)
-        let u = AVSpeechUtterance(string: text)
-        u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        u.rate = 0.55
-        speech.speak(u)
+        LocalVoice.say(text)   // 和读字/找东西共用一个播报口，新话顶旧话，不互相叠音
     }
 }
