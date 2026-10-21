@@ -74,6 +74,41 @@ final class Rover {
         ground = -1.4
     }
 
+    // MARK: - 真机自检：合成场景验证走廊判定与绕行方向的左右正确性（防移植镜像 bug）
+
+    func syntheticCheck() -> String {
+        func scenario(wallCoversLeft: Bool) -> (blocked: Bool, detour: Float) {
+            grid.removeAll(); ground = -1.4
+            position = .zero
+            fwd = SIMD3(0, 0, -1)       // 朝 -Z 看（ARKit 相机惯例）
+            rightV = SIMD3(1, 0, 0)
+            // 1 米外一堵墙：盖住走廊（含正中列）并向一侧延伸，另一侧敞开。
+            // 点必须放格子中心（0.1 整数倍）：放在半格边界上会落在舍入临界点，结果成噪声。
+            let ixRange = wallCoversLeft ? (-12)...1 : (-1)...12
+            for ix in ixRange {
+                for iy in -10...3 {
+                    let x = Float(ix) * 0.1, y = Float(iy) * 0.1
+                    for _ in 0..<3 {
+                        addToGrid(SIMD3(x, y, -1.0))
+                        addToGrid(SIMD3(x, y, -1.1))
+                    }
+                }
+            }
+            let out = checkForObstacle()
+            return (out.blocked, out.detourDeg)
+        }
+        let a = scenario(wallCoversLeft: true)    // 墙占中+左 → 应判挡 & 往右绕(+)
+        let b = scenario(wallCoversLeft: false)   // 墙占中+右 → 应判挡 & 往左绕(−)
+        grid.removeAll(); ground = -1.4
+        let clear = checkForObstacle()
+        let s1 = a.blocked ? "✓" : "✗"
+        let s2 = (a.blocked && a.detour > 0) ? "✓" : "✗"
+        let s3 = (b.blocked && b.detour < 0) ? "✓" : "✗"
+        let s4 = !clear.blocked ? "✓" : "✗"
+        grid.removeAll()
+        return "挡墙\(s1) 右绕\(s2)(\(Int(a.detour))°) 左绕\(s3)(\(Int(b.detour))°) 空场通畅\(s4)"
+    }
+
     // MARK: - 深度 → 体素
 
     private func processDepth(frame: ARFrame, depth: ARDepthData) {
@@ -230,9 +265,10 @@ final class Rover {
             let d = v - position
             guard d.y > ground, d.y < ground + Rover.personHeight else { continue }
             let dxz = SIMD2(d.x, d.z)
-            let i = Int(simd_dot(dxz, r2) / n) + half
+            // 必须四舍五入：Int() 向零截断对正负不对称，会造成左右绕行偏置（合成自检抓出来的）
+            let i = Int((simd_dot(dxz, r2) / n).rounded()) + half
             guard i > 0, i < width - 1 else { continue }
-            let j = Int(simd_dot(dxz, f2) / n) + half
+            let j = Int((simd_dot(dxz, f2) / n).rounded()) + half
             guard j > 0, j < width - 1 else { continue }
             searchGrid[i * width + j] = 1
         }
@@ -253,8 +289,8 @@ final class Rover {
         let half = Rover.searchWidthHalf
         while abs(degree) <= 90 {
             let rad = (90 - degree) * .pi / 180
-            let x = Int(Rover.paddedDistance * cos(rad) / Rover.nodeSize)
-            let y = Int(Rover.paddedDistance * sin(rad) / Rover.nodeSize)
+            let x = Int((Rover.paddedDistance * cos(rad) / Rover.nodeSize).rounded())
+            let y = Int((Rover.paddedDistance * sin(rad) / Rover.nodeSize).rounded())
             let (hit, dist) = attemptLine(targetX: x + half, targetY: y + half)
             if !hit { return degree }
             if dist > bestDist { bestDir = degree; bestDist = dist }

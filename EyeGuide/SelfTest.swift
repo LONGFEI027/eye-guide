@@ -13,8 +13,10 @@ enum SelfTest {
 
             // 1. 相机 & 语音会话（等自动接通流程走完）
             try? await Task.sleep(nanoseconds: 5_000_000_000)
-            r["camera_running"] = g.camera.isRunning
+            r["camera_running"] = g.scoutActive ? g.arcam.running : g.camera.isRunning
             r["voice_live"] = g.voice.live
+            // Rover 合成场景：验证挡墙判定 + 绕行方向左右没反（移植最大风险点）
+            r["rover_synthetic"] = Rover().syntheticCheck()
 
             // 2. 激光雷达（Mobilio/Rover 链路）：开护航等一个真实障碍引擎输出（测完还原）
             if Scout.available {
