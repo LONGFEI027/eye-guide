@@ -5,7 +5,7 @@ struct ContentView: View {
     @ObservedObject private var guide = Guide.shared   // 单例：Siri 捷径和界面控制同一个大脑
 
     var body: some View {
-        RootView(guide: guide, voice: guide.voice, camera: guide.camera,
+        RootView(guide: guide, voice: guide.voice, camera: guide.camera, arcam: guide.arcam,
                  account: guide.account, locator: guide.locator, scout: guide.scout)
     }
 }
@@ -17,14 +17,27 @@ private struct RootView: View {
     @ObservedObject var guide: Guide
     @ObservedObject var voice: VoiceLink
     @ObservedObject var camera: CameraManager
+    @ObservedObject var arcam: ARCam
     @ObservedObject var account: Account
     @ObservedObject var locator: Locator
     @ObservedObject var scout: Scout
 
     var body: some View {
         ZStack {
-            CameraPreviewView(session: camera.session)
+            if guide.scoutActive {
+                // 护航开着：ARKit 底座，预览为 1fps 帧图
+                Group {
+                    if let img = arcam.preview {
+                        Image(uiImage: img).resizable().scaledToFill()
+                    } else {
+                        Color.black
+                    }
+                }
                 .ignoresSafeArea()
+            } else {
+                CameraPreviewView(session: camera.session)
+                    .ignoresSafeArea()
+            }
             LinearGradient(colors: [.black.opacity(0.55), .clear, .clear, .black.opacity(0.65)],
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
@@ -54,7 +67,7 @@ private struct RootView: View {
         .onAppear {
             locator.request()
             Task { await account.check() }
-            camera.start()                                   // 提前取景，接通就有画面
+            guide.startBackend()                             // 按护航状态起对应相机底座
             UIApplication.shared.isIdleTimerDisabled = true  // 出门导览不许锁屏
             // 盲人入口：打开 App 即自动接通（双击图标=一步到位；登录弹窗在时不抢）
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -128,6 +141,8 @@ private struct RootView: View {
         Group {
             if camera.permissionDenied {
                 Text("需要相机权限才能帮你看路，请到设置里打开")
+            } else if scout.zone == .danger || scout.zone == .warn {
+                Text(scout.detourDeg > 15 ? "↱ 往右绕" : (scout.detourDeg < -15 ? "↰ 往左绕" : "前方受阻"))
             } else if guide.looking {
                 Label("正在仔细看…", systemImage: "eye")
             } else if !voice.status.isEmpty {

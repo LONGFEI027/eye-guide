@@ -3,8 +3,9 @@ import UIKit
 import Combine
 
 /// 总控：接通语音、把镜头画面喂给小路、执行她调用的工具。
-/// 本地即时层（不经过大模型）：护航=激光雷达障碍预警（Scout）、读字=本地 OCR 即时朗读、
-/// 找东西=本地分类器报方向（Finder）。模式（聊天/行走/读字/找东西）由她调 set_mode 切换。
+/// 相机双底座：护航关=AVFoundation（CameraManager，有光学变焦）；
+/// 护航开=ARKit（ARCam，LiDAR深度+位姿喂 Rover 障碍引擎，Mobilio 式护航）。
+/// 本地即时层（不经过大模型）：护航（Scout）、读字=本地 OCR 即时朗读、找东西=本地分类器。
 @MainActor
 final class Guide: ObservableObject {
     static let shared = Guide()      // Siri 捷径（Intents.swift）也要控制它，单例
@@ -16,6 +17,7 @@ final class Guide: ObservableObject {
 
     let voice = VoiceLink()
     let camera = CameraManager()
+    let arcam = ARCam()
     let account = Account()
     let locator = Locator()
     let scout = Scout()
@@ -27,34 +29,42 @@ final class Guide: ObservableObject {
     private var lastFindCallout = Date.distantPast
     private var findInformed = false             // 本地首次命中目标后告知她一次
 
+    var scoutActive: Bool { scout.enabled && Scout.available }
+
     init() {
-        camera.onSnapshot = { [weak self] jpeg in
-            guard let self else { return }
-            self.voice.sendImage(jpeg)
-            switch self.mode {
-            case .read: self.readTick(jpeg)
-            case .find: self.findTick(jpeg)
-            default: break
-            }
-        }
-        camera.onObstacle = { [weak self] d in self?.scout.feed(d) }
+        camera.onSnapshot = { [weak self] jpeg in self?.handleSnapshot(jpeg) }
+        arcam.onSnapshot = { [weak self] jpeg in self?.handleSnapshot(jpeg) }
+        arcam.onObstacle = { [weak self] out in self?.scout.update(out) }
         voice.onCaption = { [weak self] t in self?.botLine = t }
         voice.onUserText = { [weak self] t in self?.userLine = t }
         voice.onToolCall = { [weak self] name, args, id, spoke in self?.tool(name, args, id, spoke) }
         voice.onNeedLogin = { [weak self] in self?.account.needLogin = true }
         if scout.enabled, Scout.available {
-            camera.wantsDepth = true             // 开机就带深度（configure 在 camera.start 时生效）
-            scout.setEnabled(true)
+            scout.setEnabled(true)   // 上次开着就续上（底座在 startBackend 里起）
         }
-        // 行走模式下，雷达跨入危险档时让她知情（不开口，App已经震动+播报过了）
+        // 行走模式下，雷达跨入危险档时让她知情（不开口，App已经震动+滴滴+播报过了）
         scout.$zone.removeDuplicates().sink { [weak self] z in
             Task { @MainActor in
                 guard let self, self.mode == .walk, self.voice.live else { return }
                 if z == .danger {
-                    self.voice.event("雷达：正前方1米内有障碍，App已震动提醒过对方，你不用重复", speak: false)
+                    self.voice.event("雷达：正前方1米内有障碍，App已用震动和滴滴声提醒并给了绕行方向，你不用重复", speak: false)
                 }
             }
         }.store(in: &bag)
+    }
+
+    /// App 启动时由界面调用：按护航状态起对应的相机底座
+    func startBackend() {
+        if scoutActive { arcam.start() } else { camera.start() }
+    }
+
+    private func handleSnapshot(_ jpeg: Data) {
+        voice.sendImage(jpeg)
+        switch mode {
+        case .read: readTick(jpeg)
+        case .find: findTick(jpeg)
+        default: break
+        }
     }
 
     func toggleCall() {
@@ -62,24 +72,35 @@ final class Guide: ObservableObject {
         if voice.live {
             voice.stop()
             camera.wantsSnapshots = false
+            arcam.wantsSnapshots = false
             camera.setTorch(false)
             userLine = ""; botLine = ""
             setMode(.chat, target: nil)          // 挂断回到默认模式
             LocalVoice.hush()
         } else {
-            camera.start()
-            camera.wantsSnapshots = true
+            startBackend()
+            if scoutActive { arcam.wantsSnapshots = true } else { camera.wantsSnapshots = true }
             voice.start(instructions: instructions())
         }
     }
 
-    /// 护航开关（界面按钮）：激光雷达障碍预警
+    /// 护航开关（界面按钮/Siri）：切换相机底座 + 障碍引擎
     func toggleScout() {
         guard Scout.available else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let on = !scout.enabled
         scout.setEnabled(on)
-        camera.setDepth(on)
+        if on {
+            camera.wantsSnapshots = false
+            camera.stop()
+            arcam.start()
+            arcam.wantsSnapshots = voice.live
+        } else {
+            arcam.wantsSnapshots = false
+            arcam.stop()
+            camera.start()
+            camera.wantsSnapshots = voice.live
+        }
         voice.refreshInstructions(instructions())
     }
 
@@ -95,18 +116,15 @@ final class Guide: ObservableObject {
 
     func setMode(_ m: GuideMode, target: String?) {
         // 退出旧模式的收尾
-        if mode == .read { camera.snapshotWidth = 640 }
+        if mode == .read { camera.snapshotWidth = 640; arcam.snapshotWidth = 640 }
         if mode == .find { finder.set(target: nil); findInformed = false }
         mode = m
         // 进入新模式的准备
         switch m {
         case .walk:
-            if Scout.available, !scout.enabled {    // 行走自动开护航
-                scout.setEnabled(true)
-                camera.setDepth(true)
-            }
+            if Scout.available, !scout.enabled { toggleScout() }   // 行走自动开护航
         case .read:
-            camera.snapshotWidth = 960              // 小字也要看得清
+            camera.snapshotWidth = 960; arcam.snapshotWidth = 960  // 小字也要看得清
             lastRead = ""
         case .find:
             finder.set(target: target)
@@ -117,7 +135,7 @@ final class Guide: ObservableObject {
         voice.refreshInstructions(instructions())
     }
 
-    // MARK: - 本地通道（读字 / 找东西，每秒一帧随 onSnapshot 进来）
+    // MARK: - 本地通道（读字 / 找东西，每秒一帧随 handleSnapshot 进来）
 
     private func readTick(_ jpeg: Data) {
         guard !voice.isBusy else { return }   // 小路正在说话：本地播报让路，下一帧再来
@@ -150,6 +168,20 @@ final class Guide: ObservableObject {
         }
     }
 
+    // MARK: - 拍一张（look_closely 和真机自检共用；按当前底座走）
+
+    func captureJPEG(_ completion: @escaping (Data?) -> Void) {
+        if scoutActive {
+            arcam.captureHiRes { data in
+                completion(data.flatMap { CameraManager.downscale($0, maxWidth: 1280) ?? $0 })
+            }
+        } else {
+            camera.capture { data in
+                completion(data.flatMap { CameraManager.downscale($0, maxWidth: 1280) })
+            }
+        }
+    }
+
     // MARK: - 工具执行
 
     private func tool(_ name: String, _ args: [String: Any], _ id: String, _ spoke: Bool) {
@@ -157,11 +189,11 @@ final class Guide: ObservableObject {
         case "look_closely":
             looking = true
             let q = (args["question"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "描述画面里的关键信息"
-            camera.capture { [weak self] data in
+            captureJPEG { [weak self] jpeg in
                 guard let self else { return }
-                guard let data, let jpeg = CameraManager.downscale(data, maxWidth: 1280) else {
+                guard let jpeg else {
                     self.looking = false
-                    self.voice.toolResult(callId: id, output: "拍照失败了，如实告诉对方没看成，请他举稳手机稍后再试", speak: true)
+                    self.voice.toolResult(callId: id, output: "拍照失败了，如实告诉对方没看成，请他稍后再试", speak: true)
                     return
                 }
                 self.analyze(jpeg: jpeg, question: q, callId: id)
@@ -187,13 +219,17 @@ final class Guide: ObservableObject {
             voice.toolResult(callId: id, output: note, speak: true)
 
         case "set_zoom":
-            let lens = Tools.lens(args["lens"])
-            camera.setZoom(label: lens)
-            voice.toolResult(callId: id, output: "已切到\(lens)倍镜头，下一帧画面就是新焦段", speak: false)
+            if scoutActive {
+                voice.toolResult(callId: id, output: "护航开着时用的是广角雷达相机，没有变焦；想看清楚直接用 look_closely", speak: false)
+            } else {
+                let lens = Tools.lens(args["lens"])
+                camera.setZoom(label: lens)
+                voice.toolResult(callId: id, output: "已切到\(lens)倍镜头，下一帧画面就是新焦段", speak: false)
+            }
 
         case "set_torch":
             let on = Tools.bool(args["on"])
-            camera.setTorch(on)
+            if scoutActive { arcam.setTorch(on) } else { camera.setTorch(on) }
             voice.toolResult(callId: id, output: on ? "手电筒已打开" : "手电筒已关闭", speak: !spoke)
 
         default:

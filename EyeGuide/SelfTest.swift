@@ -16,29 +16,34 @@ enum SelfTest {
             r["camera_running"] = g.camera.isRunning
             r["voice_live"] = g.voice.live
 
-            // 2. 激光雷达：等一个真实距离读数（临时接管回调，测完还原）
+            // 2. 激光雷达（Mobilio/Rover 链路）：开护航等一个真实障碍引擎输出（测完还原）
             if Scout.available {
-                let hadDepth = g.camera.wantsDepth
+                let wasOn = g.scout.enabled
                 var seen: Float = -1
-                let old = g.camera.onObstacle
-                g.camera.onObstacle = { d in seen = d; old?(d) }
-                if !hadDepth { g.camera.setDepth(true) }
+                var sawBlocked = false
+                let old = g.arcam.onObstacle
+                g.arcam.onObstacle = { out in
+                    seen = out.blocked ? out.closest : 0
+                    sawBlocked = sawBlocked || out.blocked
+                    old?(out)
+                }
+                if !wasOn { g.toggleScout() }
                 let t0 = Date()
-                while Date().timeIntervalSince(t0) < 6, seen < 0 {
+                while Date().timeIntervalSince(t0) < 8, seen < 0 {
                     try? await Task.sleep(nanoseconds: 300_000_000)
                 }
-                g.camera.onObstacle = old
-                if !hadDepth { g.camera.setDepth(false) }
-                r["lidar_distance_m"] = seen < 0 ? "no_data" : String(format: "%.2f", seen)
+                g.arcam.onObstacle = old
+                r["rover_output"] = seen < 0 ? "no_data" : (sawBlocked ? String(format: "blocked@%.2fm", seen) : "clear")
+                if !wasOn { g.toggleScout() }
             } else {
-                r["lidar_distance_m"] = "no_lidar"
+                r["rover_output"] = "no_lidar"
             }
 
-            // 3. 真拍一张：OCR + 分类器（看它此刻真实看到什么）
-            let photo: Data? = await withCheckedContinuation { c in
-                g.camera.capture { c.resume(returning: $0) }
+            // 3. 真拍一张：OCR + 分类器（按当前底座走，看它此刻真实看到什么）
+            let jpeg: Data? = await withCheckedContinuation { c in
+                g.captureJPEG { c.resume(returning: $0) }
             }
-            if let p = photo, let jpeg = CameraManager.downscale(p, maxWidth: 1280) {
+            if let jpeg {
                 r["photo_bytes"] = jpeg.count
                 r["ocr_on_device"] = await OCR.read(jpeg) ?? "(画面里无文字)"
                 if let cgi = UIImage(data: jpeg)?.cgImage {
@@ -63,10 +68,7 @@ enum SelfTest {
             r["mode_walk_scout_auto"] = (g.mode == .walk && (!Scout.available || g.scout.enabled))
             g.setMode(.chat, target: nil)
             r["mode_chat_restore"] = (g.mode == .chat && g.camera.snapshotWidth == 640)
-            if g.scout.enabled != scoutWas {
-                g.scout.setEnabled(scoutWas)
-                g.camera.setDepth(scoutWas)
-            }
+            if g.scout.enabled != scoutWas { g.toggleScout() }   // walk 自动开了护航就还原
 
             // 5. 纯逻辑抽查
             r["ocr_similar"] = OCR.similar("出口往左", "出口往左走") > 0.5 && OCR.similar("出口", "洗手间") < 0.3
