@@ -41,6 +41,13 @@ final class Beeper {
         if !engine.isRunning { try? engine.start(); player.play() }
     }
 
+    /// 当前声音是否走蓝牙耳机（滴滴声只在耳机通道启用；外放场景靠震动+语音，免得吵）
+    static var onBluetooth: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains {
+            [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains($0.portType)
+        }
+    }
+
     /// pan ∈ [-1,1]：滴滴声来自要去的方向
     func tick(pan: Float) {
         ensure()
@@ -123,7 +130,7 @@ final class Scout: ObservableObject {
             Task { @MainActor in
                 guard let self, self.enabled, self.holding else { return }
                 self.pulse(0.6)
-                self.beeper.tick(pan: sin(self.detourDeg * .pi / 180))
+                if Beeper.onBluetooth { self.beeper.tick(pan: sin(self.detourDeg * .pi / 180)) }
             }
         }
     }
@@ -224,11 +231,11 @@ final class Scout: ObservableObject {
         guard force || beepTimer == nil || abs(rate - beepRate) > 0.8 else { return }
         beepRate = rate
         beepTimer?.invalidate()
-        if force { beeper.tick(pan: sin(detourDeg * .pi / 180)) }   // 只在进档时立即响一声
+        if force, Beeper.onBluetooth { beeper.tick(pan: sin(detourDeg * .pi / 180)) }   // 只在进档时立即响一声
         beepTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / rate, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, !self.holding,
-                      self.zone == .warn || self.zone == .danger else { return }
+                      self.zone == .warn || self.zone == .danger, Beeper.onBluetooth else { return }
                 self.beeper.tick(pan: sin(self.detourDeg * .pi / 180))
             }
         }

@@ -18,8 +18,8 @@ final class Rover {
     static let paddedDistance: Float = 2           // 找绕行方向时的探测距离
     static let personRadius: Float = 0.25          // 半肩宽
     static let personHeight: Float = 1.7
-    static let pointsToBlockCell: Float = 2        // 体素被判"占据"所需点数
-    static let cellsToBlockPerson = 2              // 走廊内≥2个占据体素=挡路
+    static let pointsToBlockCell: Float = 3        // 体素被判"占据"所需点数（2→3：用户反馈太敏感）
+    static let cellsToBlockPerson = 3              // 走廊内≥3个占据体素=挡路（2→3：同上）
     static let groundPadding: Float = 0.4
     static let groundRadius: Float = 0.3
     static let cellDeletionRange: Float = searchRadius + 1
@@ -88,7 +88,7 @@ final class Rover {
             for ix in ixRange {
                 for iy in -10...3 {
                     let x = Float(ix) * 0.1, y = Float(iy) * 0.1
-                    for _ in 0..<3 {
+                    for _ in 0..<5 {    // 必须 > pointsToBlockCell
                         addToGrid(SIMD3(x, y, -1.0))
                         addToGrid(SIMD3(x, y, -1.1))
                     }
