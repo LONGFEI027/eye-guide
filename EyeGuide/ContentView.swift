@@ -121,6 +121,7 @@ private struct RootView: View {
         switch scout.zone {
         case .danger: return "很近!"
         case .warn: return String(format: "%.1f米", scout.distance)
+        case .far: return String(format: "%.1f米", scout.distance)
         case .clear: return "畅通"
         case .off: return "护航"
         }
@@ -131,6 +132,7 @@ private struct RootView: View {
         switch scout.zone {
         case .danger: return .red.opacity(0.85)
         case .warn: return .orange.opacity(0.85)
+        case .far: return .teal.opacity(0.75)
         default: return .green.opacity(0.6)
         }
     }

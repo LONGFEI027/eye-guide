@@ -34,7 +34,7 @@ final class Guide: ObservableObject {
     init() {
         camera.onSnapshot = { [weak self] jpeg in self?.handleSnapshot(jpeg) }
         arcam.onSnapshot = { [weak self] jpeg in self?.handleSnapshot(jpeg) }
-        arcam.onObstacle = { [weak self] out in self?.scout.update(out) }
+        arcam.onObstacle = { [weak self] inst, out in self?.scout.update(instant: inst, rover: out) }
         voice.onCaption = { [weak self] t in self?.botLine = t }
         voice.onUserText = { [weak self] t in self?.userLine = t }
         voice.onToolCall = { [weak self] name, args, id, spoke in self?.tool(name, args, id, spoke) }

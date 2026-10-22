@@ -16,7 +16,9 @@ final class ARCam: NSObject, ObservableObject, ARSessionDelegate {
     var onSnapshot: ((Data) -> Void)?             // 1fps 喂实时模型（主线程回调）
     var wantsSnapshots = false
     var snapshotWidth: CGFloat = 640
-    var onObstacle: ((Rover.Output) -> Void)?     // 约6Hz 障碍输出（主线程回调）
+    /// 约6Hz（主线程回调）：(正前方即时距离[米，99=空旷], Rover世界模型输出)
+    /// 即时距离驱动滴滴节奏（简单可预测）；Rover 只负责"往哪绕"的语音提示
+    var onObstacle: ((Float, Rover.Output) -> Void)?
 
     let session = ARSession()                     // 给 ARPreviewView 共用
 
@@ -53,12 +55,12 @@ final class ARCam: NSObject, ObservableObject, ARSessionDelegate {
     // 在 arQueue 上执行
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let now = Date()
-        // 障碍引擎 ~6Hz
+        // 障碍引擎 ~6Hz：即时中央距离（驱动滴滴）+ Rover（绕行方向）
         if now.timeIntervalSince(lastRover) > 0.16 {
             lastRover = now
-            if let out = rover.ingest(frame) {
-                DispatchQueue.main.async { self.onObstacle?(out) }
-            }
+            let inst = Self.instantCenterDistance(frame)
+            let out = rover.ingest(frame) ?? Rover.Output(closest: 999, blocked: false, detourDeg: 0)
+            DispatchQueue.main.async { self.onObstacle?(inst, out) }
         }
         // 实时帧 1fps（竖屏转正；编码在后台，主线程只收数据）
         if wantsSnapshots, now.timeIntervalSince(lastSnap) > 1.0 {
@@ -98,6 +100,48 @@ final class ARCam: NSObject, ObservableObject, ARSessionDelegate {
                 DispatchQueue.main.async { completion(data) }
             }
         }
+    }
+
+    /// 正前方即时距离：深度图中央 30% 窗口的 10 分位最近值（抗噪）。
+    /// 这是用户实测后选定的主测距方式——此刻镜头正对什么就测什么，简单可预测；
+    /// 侧面物体不乱入（对比世界模型走廊：会受朝向抖动和残留体素影响）。
+    private static func instantCenterDistance(_ frame: ARFrame) -> Float {
+        guard let depth = frame.sceneDepth else { return 99 }
+        let map = depth.depthMap
+        guard let confMap = depth.confidenceMap else { return 99 }
+        CVPixelBufferLockBaseAddress(map, .readOnly)
+        CVPixelBufferLockBaseAddress(confMap, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(map, .readOnly)
+            CVPixelBufferUnlockBaseAddress(confMap, .readOnly)
+        }
+        let w = CVPixelBufferGetWidth(map), h = CVPixelBufferGetHeight(map)
+        guard let dBase = CVPixelBufferGetBaseAddress(map),
+              let cBase = CVPixelBufferGetBaseAddress(confMap) else { return 99 }
+        let dRow = CVPixelBufferGetBytesPerRow(map) / 4
+        let cRow = CVPixelBufferGetBytesPerRow(confMap)
+        let dPtr = dBase.assumingMemoryBound(to: Float32.self)
+        let cPtr = cBase.assumingMemoryBound(to: UInt8.self)
+        var vals: [Float] = []
+        vals.reserveCapacity(200)
+        let x0 = Int(Double(w) * 0.35), x1 = Int(Double(w) * 0.65)
+        let y0 = Int(Double(h) * 0.35), y1 = Int(Double(h) * 0.65)
+        let step = max(1, (x1 - x0) / 12)
+        var y = y0
+        while y < y1 {
+            var x = x0
+            while x < x1 {
+                if cPtr[y * cRow + x] >= 1 {
+                    let v = dPtr[y * dRow + x]
+                    if v.isFinite, v > 0.15, v < 8 { vals.append(v) }
+                }
+                x += step
+            }
+            y += step
+        }
+        guard vals.count > 8 else { return 99 }
+        vals.sort()
+        return vals[max(0, vals.count / 10)]
     }
 
     /// 手电筒：ARKit 占用相机期间仍可锁设备开关闪光灯

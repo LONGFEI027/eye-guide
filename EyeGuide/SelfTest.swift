@@ -27,10 +27,10 @@ enum SelfTest {
                 var seen: Float = -1
                 var sawBlocked = false
                 let old = g.arcam.onObstacle
-                g.arcam.onObstacle = { out in
-                    seen = out.blocked ? out.closest : 0
+                g.arcam.onObstacle = { inst, out in
+                    seen = out.blocked ? out.closest : (inst < 90 ? inst : 0)
                     sawBlocked = sawBlocked || out.blocked
-                    old?(out)
+                    old?(inst, out)
                 }
                 if !wasOn { g.toggleScout() }
                 let t0 = Date()

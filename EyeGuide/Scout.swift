@@ -3,19 +3,24 @@ import UIKit
 import AVFoundation
 import CoreHaptics
 
-/// 滴滴声通道（Mobilio 式）：节奏=距离（1.5m 约2次/秒 → 0.2m 封顶约11.7次/秒），
-/// 声像=绕行方向（滴滴从哪边来就往哪边走）。走当前音频路由（蓝牙耳机）。
+/// 滴滴声通道：单一音调、台阶式节奏（像倒车雷达），只在蓝牙耳机接着时启用。
+/// 不做任何方向编码——骨传导的颅骨串声让短音的声像/音调定位都不可靠（用户实测确认），
+/// 方向信息一律交给语音（"往左绕/往右绕"）。
 @MainActor
 final class Beeper {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var started = false
-    // 方向用音调编码（通话走蓝牙HFP是单声道，左右声像会失效；音调在任何通道都成立）
-    private lazy var low = Self.tone(freq: 740, ms: 90)     // 往左
-    private lazy var mid = Self.tone(freq: 1050, ms: 80)    // 直行/停
-    private lazy var high = Self.tone(freq: 1480, ms: 90)   // 往右
+    private lazy var buf = Self.tone(freq: 1050, ms: 80)
 
     private static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+
+    /// 当前声音是否走蓝牙耳机（滴滴只在耳机通道响；外放靠震动+语音，免得吵）
+    static var onBluetooth: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains {
+            [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains($0.portType)
+        }
+    }
 
     private static func tone(freq: Double, ms: Double) -> AVAudioPCMBuffer? {
         let n = Int(format.sampleRate * ms / 1000)
@@ -24,7 +29,7 @@ final class Beeper {
         let p = buf.floatChannelData![0]
         for i in 0..<n {
             let t = Double(i) / format.sampleRate
-            let fade = min(1, Double(min(i, n - i)) / (format.sampleRate * 0.008))   // 8ms 淡入淡出防爆音
+            let fade = min(1, Double(min(i, n - i)) / (format.sampleRate * 0.008))
             p[i] = Float(sin(2 * .pi * freq * t) * 0.6 * fade)
         }
         return buf
@@ -33,7 +38,7 @@ final class Beeper {
     private func ensure() {
         if !started {
             let s = AVAudioSession.sharedInstance()
-            if s.category != .playAndRecord {      // 通话没开时自备会话；开了就用通话的
+            if s.category != .playAndRecord {
                 try? s.setCategory(.playback, options: [.mixWithOthers])
                 try? s.setActive(true)
             }
@@ -44,66 +49,60 @@ final class Beeper {
         if !engine.isRunning { try? engine.start(); player.play() }
     }
 
-    /// 当前声音是否走蓝牙耳机（滴滴声只在耳机通道启用；外放场景靠震动+语音，免得吵）
-    static var onBluetooth: Bool {
-        AVAudioSession.sharedInstance().currentRoute.outputs.contains {
-            [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains($0.portType)
-        }
-    }
-
-    /// 方向双编码：声像（立体声通道有效）+ 音调（左低/右高，单声道也能分）
-    func tick(deg: Float) {
+    func tick() {
+        guard Self.onBluetooth else { return }
         ensure()
-        player.pan = max(-1, min(1, sin(deg * .pi / 180)))
-        let b = deg < -15 ? low : (deg > 15 ? high : mid)
-        if let b { player.scheduleBuffer(b, completionHandler: nil) }
+        player.pan = 0
+        if let b = buf { player.scheduleBuffer(b, completionHandler: nil) }
     }
 
     func stopEngine() { if engine.isRunning { engine.pause() } }
 }
 
-/// 护航：Mobilio 式障碍预警（本地安全层，完全不经过大模型）。
-/// 输入来自 Rover（体素栅格+走廊判定+绕行方向，路过的行人靠格子衰减自动过滤）。
-/// 提示三通道：震动（危险档密震）+ 滴滴声像（方向=往哪绕）+ 短语音（跨档时）。
-/// 定位是"白手杖的补充"——管胸口高度的障碍；台阶、坑、地面落差靠盲杖。
+/// 护航（2026-10-22 按用户实测定稿的简化方案）：
+/// - 测距 = 正前方即时距离（简单可预测，侧面不乱入）
+/// - 滴滴 = 距离的台阶节奏：>2.5m 安静，1.5~2.5m 慢滴，1~1.5m 中速，<1m 急促
+/// - 震动 = 用户认可的节奏：危险档密震、注意档进档双震
+/// - 方向 = 只走语音（危险时"停，往X绕"，来自 Mobilio 世界模型），滴滴不编码方向
+/// - 她说话时非危险播报让路；站着不动 4 秒降为轻提醒
 @MainActor
 final class Scout: ObservableObject {
-    enum Zone: Int { case off = 0, clear, warn, danger }
+    enum Zone: Int { case off = 0, clear, far, warn, danger }
     @Published var zone: Zone = .off
-    @Published var distance: Float = 0           // 走廊内最近障碍（米）
-    @Published var detourDeg: Float = 0          // 绕行方向（右正左负）
+    @Published var distance: Float = 0
+    @Published var detourDeg: Float = 0
+    @Published var holding = false
     @Published var enabled = UserDefaults.standard.bool(forKey: "scout.enabled") {
         didSet { UserDefaults.standard.set(enabled, forKey: "scout.enabled") }
     }
     static let available = ARCam.supported
 
-    /// 小路（大模型语音）是否正在说话——护航的非危险播报要让路，别打架
+    /// 小路（大模型语音）是否正在说话——非危险播报让路
     var voiceBusy: (() -> Bool)?
 
     private var hapticEngine: CHHapticEngine?
     private let beeper = Beeper()
     private var hapticTimer: Timer?
     private var beepTimer: Timer?
-    private var beepRate: Double = 0
     private var lastSpoke = Date.distantPast
-    // 静止抑制：持续受阻但人没动（比如站在桌前），4秒后降为每3秒一声轻提醒，动了立刻恢复
-    @Published var holding = false
     private var refDistance: Float = -1
     private var stillSince: Date?
     private var holdTimer: Timer?
 
-    // MARK: - 主入口：Rover 输出（约6Hz）
+    // MARK: - 主入口（约6Hz）
 
-    func update(_ o: Rover.Output) {
+    func update(instant: Float, rover: Rover.Output) {
         guard enabled else { return }
-        distance = o.blocked ? o.closest : 0
-        detourDeg = o.detourDeg
-        let newZone: Zone = o.blocked ? (o.closest < 1.0 ? .danger : .warn) : .clear
+        distance = instant
+        detourDeg = rover.blocked ? rover.detourDeg : 0
 
-        // 静止判定：受阻且距离基本不变 → 进入轻提醒；距离变化>15cm → 恢复
-        if o.blocked {
-            if refDistance < 0 || abs(o.closest - refDistance) > 0.15 {
-                refDistance = o.closest
+        // 带滞回的台阶分档（全部基于即时距离）
+        let z = zoned(instant)
+
+        // 静止抑制：近距（warn/danger）且 4 秒距离不变 → 轻提醒；动了恢复
+        if z == .warn || z == .danger {
+            if refDistance < 0 || abs(instant - refDistance) > 0.15 {
+                refDistance = instant
                 stillSince = Date()
                 if holding { exitHold() }
             } else if !holding, let s = stillSince, Date().timeIntervalSince(s) > 4 {
@@ -115,51 +114,39 @@ final class Scout: ObservableObject {
             if holding { exitHold() }
         }
 
-        if newZone != zone {
-            zone = newZone
+        if z != zone {
+            let old = zone
+            zone = z
             if !holding {
-                announce(newZone)
+                announce(from: old, to: z, rover: rover)
                 retuneHaptics()
-                retuneBeeps(force: true)
-            }
-        } else if o.blocked, !holding {
-            retuneBeeps(force: false)   // 距离变了才会真正重调，不会每帧轰炸
-        }
-    }
-
-    private func enterHold() {
-        holding = true
-        hapticTimer?.invalidate(); hapticTimer = nil
-        beepTimer?.invalidate(); beepTimer = nil
-        beepRate = 0
-        if !(voiceBusy?() ?? false) { say("前面一直挡着，你动的时候我再细报") }
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.enabled, self.holding else { return }
-                self.pulse(0.6)
-                if Beeper.onBluetooth { self.beeper.tick(deg: self.detourDeg) }
+                retuneBeeps()
             }
         }
     }
 
-    private func exitHold() {
-        holding = false
-        holdTimer?.invalidate(); holdTimer = nil
-        if zone == .warn || zone == .danger {
-            retuneHaptics()
-            retuneBeeps(force: true)
+    /// 滞回分档：进档和出档的门限错开 0.15m，避免边界抖动
+    private func zoned(_ d: Float) -> Zone {
+        switch zone {
+        case .danger: return d > 1.15 ? base(d) : .danger
+        case .warn:   return d < 1.0 ? .danger : (d > 1.65 ? base(d) : .warn)
+        case .far:    return d < 1.5 ? base(d) : (d > 2.7 ? .clear : .far)
+        default:      return base(d)
         }
+    }
+
+    private func base(_ d: Float) -> Zone {
+        d < 1.0 ? .danger : (d < 1.5 ? .warn : (d < 2.5 ? .far : .clear))
     }
 
     func setEnabled(_ on: Bool) {
         enabled = on
         if on {
-            // iOS 默认在录音期间屏蔽触感震动，显式放行
             try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(true)
             ensureEngine()
             zone = .clear
             say("护航已开启")
-            for i in 0..<3 {   // 连震三下：当场验证震动通路
+            for i in 0..<3 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 * Double(i)) { [weak self] in
                     self?.pulse(1.0)
                 }
@@ -171,13 +158,35 @@ final class Scout: ObservableObject {
             holdTimer?.invalidate(); holdTimer = nil
             holding = false
             refDistance = -1; stillSince = nil
-            beepRate = 0
             beeper.stopEngine()
             say("护航已关闭")
         }
     }
 
-    // MARK: - 震动（用户实测可用的 CoreHaptics 版，别动）
+    private func enterHold() {
+        holding = true
+        hapticTimer?.invalidate(); hapticTimer = nil
+        beepTimer?.invalidate(); beepTimer = nil
+        if !(voiceBusy?() ?? false) { say("前面一直挡着，你动的时候我再细报") }
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.enabled, self.holding else { return }
+                self.pulse(0.6)
+                self.beeper.tick()
+            }
+        }
+    }
+
+    private func exitHold() {
+        holding = false
+        holdTimer?.invalidate(); holdTimer = nil
+        if zone != .clear, zone != .off {
+            retuneHaptics()
+            retuneBeeps()
+        }
+    }
+
+    // MARK: - 震动（用户实测认可的节奏，别动）
 
     private func ensureEngine() {
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics, hapticEngine == nil else { return }
@@ -200,10 +209,9 @@ final class Scout: ObservableObject {
                 if (try? p.start(atTime: CHHapticTimeImmediate)) != nil { return }
             }
         }
-        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)   // 兜底：老式整机震动
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
     }
 
-    /// 危险档持续密震；注意档进档双震（胸前支架场景持续震太烦，实测反馈）
     private func retuneHaptics() {
         hapticTimer?.invalidate(); hapticTimer = nil
         ensureEngine()
@@ -211,7 +219,7 @@ final class Scout: ObservableObject {
         case .danger:
             hapticTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] _ in
                 Task { @MainActor in
-                    guard let self, self.enabled, self.zone == .danger else { return }
+                    guard let self, self.enabled, self.zone == .danger, !self.holding else { return }
                     self.pulse(1.0)
                 }
             }
@@ -223,45 +231,41 @@ final class Scout: ObservableObject {
         }
     }
 
-    // MARK: - 滴滴声（Mobilio：节奏=距离，声像=绕行方向）
+    // MARK: - 滴滴：台阶节奏，每档固定频率（可预测）
 
-    private func retuneBeeps(force: Bool) {
-        guard zone == .warn || zone == .danger else {
-            beepTimer?.invalidate(); beepTimer = nil; beepRate = 0
-            return
+    private func retuneBeeps() {
+        beepTimer?.invalidate(); beepTimer = nil
+        let interval: TimeInterval
+        switch zone {
+        case .danger: interval = 0.125   // 8次/秒
+        case .warn: interval = 0.33      // 3次/秒
+        case .far: interval = 0.9        // 约1次/秒——"2米外慢慢滴"
+        default: return
         }
-        // 1.5m→2Hz，0.2m→11.7Hz（Mobilio 参数）
-        let d = max(0.2, min(Rover.distanceToObstacle, distance))
-        let t = Double((d - 0.2) / (Rover.distanceToObstacle - 0.2))
-        let rate = 11.72 - t * 9.72
-        // 频率没明显变化就不动计时器——否则 6Hz 的雷达刷新会把滴滴变成持续轰炸
-        guard force || beepTimer == nil || abs(rate - beepRate) > 0.8 else { return }
-        beepRate = rate
-        beepTimer?.invalidate()
-        if force, Beeper.onBluetooth { beeper.tick(deg: detourDeg) }   // 只在进档时立即响一声
-        beepTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / rate, repeats: true) { [weak self] _ in
+        beeper.tick()
+        beepTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, !self.holding,
-                      self.zone == .warn || self.zone == .danger, Beeper.onBluetooth else { return }
-                self.beeper.tick(deg: self.detourDeg)
+                      self.zone == .far || self.zone == .warn || self.zone == .danger else { return }
+                self.beeper.tick()
             }
         }
     }
 
-    // MARK: - 短语音（跨档时一句，2 秒限频）
+    // MARK: - 语音（方向唯一出口；非危险让路）
 
-    private func announce(_ z: Zone) {
+    private func announce(from old: Zone, to z: Zone, rover: Rover.Output) {
         guard Date().timeIntervalSince(lastSpoke) > 2 else { return }
         let busy = voiceBusy?() ?? false
         switch z {
         case .danger:
-            say("停，" + detourText())   // 危险永远开口（安全优先）
+            say("停" + (rover.blocked ? "，" + detourText() : ""))   // 危险永远开口
         case .warn:
-            if !busy { say(String(format: "前方%.0f米有挡，", max(1, distance.rounded())) + detourText()) }
+            if !busy { say("前方一米半有东西") }
         case .clear:
-            if !busy { say("通了") }
-        case .off:
-            break
+            if !busy, old == .warn || old == .danger { say("通了") }
+        default:
+            break   // far 档不说话，只有慢滴
         }
     }
 
