@@ -39,6 +39,7 @@ final class Guide: ObservableObject {
         voice.onUserText = { [weak self] t in self?.userLine = t }
         voice.onToolCall = { [weak self] name, args, id, spoke in self?.tool(name, args, id, spoke) }
         voice.onNeedLogin = { [weak self] in self?.account.needLogin = true }
+        scout.voiceBusy = { [weak self] in self?.voice.isBusy ?? false }   // 她说话时护航播报让路
         if scout.enabled, Scout.available {
             scout.setEnabled(true)   // 上次开着就续上（底座在 startBackend 里起）
         }

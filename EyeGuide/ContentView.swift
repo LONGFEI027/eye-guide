@@ -25,15 +25,9 @@ private struct RootView: View {
     var body: some View {
         ZStack {
             if guide.scoutActive {
-                // 护航开着：ARKit 底座，预览为 1fps 帧图
-                Group {
-                    if let img = arcam.preview {
-                        Image(uiImage: img).resizable().scaledToFill()
-                    } else {
-                        Color.black
-                    }
-                }
-                .ignoresSafeArea()
+                // 护航开着：ARKit 原生渲染取景（共用同一个 session，流畅不卡）
+                ARPreviewView(session: arcam.session)
+                    .ignoresSafeArea()
             } else {
                 CameraPreviewView(session: camera.session)
                     .ignoresSafeArea()

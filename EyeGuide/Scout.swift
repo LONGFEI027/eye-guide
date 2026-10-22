@@ -10,7 +10,10 @@ final class Beeper {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var started = false
-    private lazy var buf = Self.tone(freq: 1175, ms: 70)
+    // 方向用音调编码（通话走蓝牙HFP是单声道，左右声像会失效；音调在任何通道都成立）
+    private lazy var low = Self.tone(freq: 740, ms: 90)     // 往左
+    private lazy var mid = Self.tone(freq: 1050, ms: 80)    // 直行/停
+    private lazy var high = Self.tone(freq: 1480, ms: 90)   // 往右
 
     private static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
 
@@ -48,11 +51,12 @@ final class Beeper {
         }
     }
 
-    /// pan ∈ [-1,1]：滴滴声来自要去的方向
-    func tick(pan: Float) {
+    /// 方向双编码：声像（立体声通道有效）+ 音调（左低/右高，单声道也能分）
+    func tick(deg: Float) {
         ensure()
-        player.pan = max(-1, min(1, pan))
-        if let b = buf { player.scheduleBuffer(b, completionHandler: nil) }
+        player.pan = max(-1, min(1, sin(deg * .pi / 180)))
+        let b = deg < -15 ? low : (deg > 15 ? high : mid)
+        if let b { player.scheduleBuffer(b, completionHandler: nil) }
     }
 
     func stopEngine() { if engine.isRunning { engine.pause() } }
@@ -72,6 +76,9 @@ final class Scout: ObservableObject {
         didSet { UserDefaults.standard.set(enabled, forKey: "scout.enabled") }
     }
     static let available = ARCam.supported
+
+    /// 小路（大模型语音）是否正在说话——护航的非危险播报要让路，别打架
+    var voiceBusy: (() -> Bool)?
 
     private var hapticEngine: CHHapticEngine?
     private let beeper = Beeper()
@@ -125,12 +132,12 @@ final class Scout: ObservableObject {
         hapticTimer?.invalidate(); hapticTimer = nil
         beepTimer?.invalidate(); beepTimer = nil
         beepRate = 0
-        say("前面一直挡着，你动的时候我再细报")
+        if !(voiceBusy?() ?? false) { say("前面一直挡着，你动的时候我再细报") }
         holdTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, self.holding else { return }
                 self.pulse(0.6)
-                if Beeper.onBluetooth { self.beeper.tick(pan: sin(self.detourDeg * .pi / 180)) }
+                if Beeper.onBluetooth { self.beeper.tick(deg: self.detourDeg) }
             }
         }
     }
@@ -231,12 +238,12 @@ final class Scout: ObservableObject {
         guard force || beepTimer == nil || abs(rate - beepRate) > 0.8 else { return }
         beepRate = rate
         beepTimer?.invalidate()
-        if force, Beeper.onBluetooth { beeper.tick(pan: sin(detourDeg * .pi / 180)) }   // 只在进档时立即响一声
+        if force, Beeper.onBluetooth { beeper.tick(deg: detourDeg) }   // 只在进档时立即响一声
         beepTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / rate, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, !self.holding,
                       self.zone == .warn || self.zone == .danger, Beeper.onBluetooth else { return }
-                self.beeper.tick(pan: sin(self.detourDeg * .pi / 180))
+                self.beeper.tick(deg: self.detourDeg)
             }
         }
     }
@@ -245,13 +252,14 @@ final class Scout: ObservableObject {
 
     private func announce(_ z: Zone) {
         guard Date().timeIntervalSince(lastSpoke) > 2 else { return }
+        let busy = voiceBusy?() ?? false
         switch z {
         case .danger:
-            say("停，" + detourText())
+            say("停，" + detourText())   // 危险永远开口（安全优先）
         case .warn:
-            say(String(format: "前方%.0f米有挡，", max(1, distance.rounded())) + detourText())
+            if !busy { say(String(format: "前方%.0f米有挡，", max(1, distance.rounded())) + detourText()) }
         case .clear:
-            say("通了")
+            if !busy { say("通了") }
         case .off:
             break
         }
