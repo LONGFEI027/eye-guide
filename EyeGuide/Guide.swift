@@ -40,18 +40,16 @@ final class Guide: ObservableObject {
         voice.onToolCall = { [weak self] name, args, id, spoke in self?.tool(name, args, id, spoke) }
         voice.onNeedLogin = { [weak self] in self?.account.needLogin = true }
         scout.voiceBusy = { [weak self] in self?.voice.isBusy ?? false }   // 她说话时护航播报让路
+        // 危险时让小路用自己的声音说方向（接通了才交给她；否则 Scout 本地兜底）。
+        // 震动是本地即时的硬安全信号，小路的语音只是补充——她慢一点也有震动先拦着。
+        scout.speakViaMoli = { [weak self] note in
+            guard let self, self.voice.live else { return false }
+            self.voice.event(note, speak: true)
+            return true
+        }
         if scout.enabled, Scout.available {
             scout.setEnabled(true)   // 上次开着就续上（底座在 startBackend 里起）
         }
-        // 行走模式下，雷达跨入危险档时让她知情（不开口，App已经震动+滴滴+播报过了）
-        scout.$zone.removeDuplicates().sink { [weak self] z in
-            Task { @MainActor in
-                guard let self, self.mode == .walk, self.voice.live else { return }
-                if z == .danger {
-                    self.voice.event("雷达：正前方1米内有障碍，App已用震动和滴滴声提醒并给了绕行方向，你不用重复", speak: false)
-                }
-            }
-        }.store(in: &bag)
     }
 
     /// App 启动时由界面调用：按护航状态起对应的相机底座

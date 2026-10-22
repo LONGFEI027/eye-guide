@@ -81,11 +81,11 @@ final class Scout: ObservableObject {
 
     /// 小路（大模型语音）是否正在说话——非危险播报让路
     var voiceBusy: (() -> Bool)?
+    /// 危险时交给小路用她自己的声音说方向；返回 true=小路会说（本地就不说），false/nil=本地兜底
+    var speakViaMoli: ((String) -> Bool)?
 
     private var hapticEngine: CHHapticEngine?
-    private let beeper = Beeper()
     private var hapticTimer: Timer?
-    private var beepTimer: Timer?
     private var lastSpoke = Date.distantPast
     private var refDistance: Float = -1
     private var stillSince: Date?
@@ -122,7 +122,6 @@ final class Scout: ObservableObject {
             if !holding {
                 announce(from: old, to: z, rover: rover)
                 retuneHaptics()
-                retuneBeeps()
             }
         }
     }
@@ -156,11 +155,9 @@ final class Scout: ObservableObject {
         } else {
             zone = .off
             hapticTimer?.invalidate(); hapticTimer = nil
-            beepTimer?.invalidate(); beepTimer = nil
             holdTimer?.invalidate(); holdTimer = nil
             holding = false
             refDistance = -1; stillSince = nil
-            beeper.stopEngine()
             say("护航已关闭")
         }
     }
@@ -168,13 +165,11 @@ final class Scout: ObservableObject {
     private func enterHold() {
         holding = true
         hapticTimer?.invalidate(); hapticTimer = nil
-        beepTimer?.invalidate(); beepTimer = nil
-        if !(voiceBusy?() ?? false) { say("前面一直挡着，你动的时候我再细报") }
+        // 静止不打扰：只留每3秒一次轻震提示"障碍还在"，不出声
         holdTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, self.holding else { return }
-                self.pulse(0.6)
-                self.beeper.tick(volume: 0.25)
+                self.pulse(0.5)
             }
         }
     }
@@ -184,11 +179,10 @@ final class Scout: ObservableObject {
         holdTimer?.invalidate(); holdTimer = nil
         if zone != .clear, zone != .off {
             retuneHaptics()
-            retuneBeeps()
         }
     }
 
-    // MARK: - 震动（用户实测认可的节奏，别动）
+    // MARK: - 震动（距离的台阶节奏；滴滴声已删，节奏全部走震动）
 
     private func ensureEngine() {
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics, hapticEngine == nil else { return }
@@ -214,61 +208,41 @@ final class Scout: ObservableObject {
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
     }
 
+    /// 距离的台阶节奏，全部走震动（滴滴声已删）：越近越密。用户已验证这个节奏手感。
     private func retuneHaptics() {
         hapticTimer?.invalidate(); hapticTimer = nil
         ensureEngine()
-        switch zone {
-        case .danger:
-            hapticTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self, self.enabled, self.zone == .danger, !self.holding else { return }
-                    self.pulse(1.0)
-                }
-            }
-        case .warn:
-            pulse(0.8)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in self?.pulse(0.8) }
-        default:
-            break
-        }
-    }
-
-    // MARK: - 滴滴：台阶节奏，每档固定频率（可预测）
-
-    private func retuneBeeps() {
-        beepTimer?.invalidate(); beepTimer = nil
         let interval: TimeInterval
-        let vol: Float
+        let intensity: Float
         switch zone {
-        case .danger: interval = 0.125; vol = 0.65   // 8次/秒
-        case .warn: interval = 0.33; vol = 0.45      // 3次/秒
-        case .far: interval = 0.9; vol = 0.3         // 约1次/秒——"2米外慢慢滴"，最轻
-        default: return
+        case .danger: interval = 0.15; intensity = 1.0    // 1米内：密震
+        case .warn:   interval = 0.33; intensity = 0.8    // 1~1.5米：中速
+        case .far:    interval = 0.9;  intensity = 0.5    // 1.5~2.5米：慢震（替代"2米慢滴"）
+        default: return                                   // clear：不震
         }
-        beeper.tick(volume: vol)
-        beepTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        pulse(intensity)
+        hapticTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, !self.holding,
                       self.zone == .far || self.zone == .warn || self.zone == .danger else { return }
-                self.beeper.tick(volume: vol)
+                self.pulse(intensity)
             }
         }
     }
 
-    // MARK: - 语音（方向唯一出口；非危险让路）
+    // MARK: - 语音（只在危险时开口；优先让小路用自己的声音说，本地只兜底）
 
     private func announce(from old: Zone, to z: Zone, rover: Rover.Output) {
         guard Date().timeIntervalSince(lastSpoke) > 2 else { return }
-        let busy = voiceBusy?() ?? false
         switch z {
         case .danger:
-            say("停" + (rover.blocked ? "，" + detourText() : ""))   // 危险永远开口
-        case .warn:
-            if !busy { say("前方一米半有东西") }
-        case .clear:
-            if !busy, old == .warn || old == .danger { say("通了") }
+            // 危险=唯一开口的时机：方向交给小路，她没接通时本地兜底一句
+            let dir = rover.blocked ? detourText() : "先停一下"
+            let note = "前方很近有障碍，提醒对方停一下，" + dir
+            if speakViaMoli?(note) != true { say("停，" + dir) }
+            lastSpoke = Date()
         default:
-            break   // far 档不说话，只有慢滴
+            break   // far/warn 只有震动；通畅不播报（整个对话交给小路）
         }
     }
 
