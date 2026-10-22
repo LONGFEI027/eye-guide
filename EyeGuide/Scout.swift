@@ -11,7 +11,7 @@ final class Beeper {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var started = false
-    private lazy var buf = Self.tone(freq: 1050, ms: 80)
+    private lazy var buf = Self.tone(freq: 880, ms: 80)   // 880Hz 比 1050 柔，骨传导不扎
 
     private static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
 
@@ -29,8 +29,8 @@ final class Beeper {
         let p = buf.floatChannelData![0]
         for i in 0..<n {
             let t = Double(i) / format.sampleRate
-            let fade = min(1, Double(min(i, n - i)) / (format.sampleRate * 0.008))
-            p[i] = Float(sin(2 * .pi * freq * t) * 0.6 * fade)
+            let fade = min(1, Double(min(i, n - i)) / (format.sampleRate * 0.015))   // 15ms 缓起缓收
+            p[i] = Float(sin(2 * .pi * freq * t) * 0.5 * fade)
         }
         return buf
     }
@@ -49,10 +49,12 @@ final class Beeper {
         if !engine.isRunning { try? engine.start(); player.play() }
     }
 
-    func tick() {
+    /// volume 0~1：按档位分级（远档最轻），用户反馈"穿透太强滴得头疼"后整体大降
+    func tick(volume: Float = 0.3) {
         guard Self.onBluetooth else { return }
         ensure()
         player.pan = 0
+        player.volume = volume
         if let b = buf { player.scheduleBuffer(b, completionHandler: nil) }
     }
 
@@ -172,7 +174,7 @@ final class Scout: ObservableObject {
             Task { @MainActor in
                 guard let self, self.enabled, self.holding else { return }
                 self.pulse(0.6)
-                self.beeper.tick()
+                self.beeper.tick(volume: 0.15)
             }
         }
     }
@@ -236,18 +238,19 @@ final class Scout: ObservableObject {
     private func retuneBeeps() {
         beepTimer?.invalidate(); beepTimer = nil
         let interval: TimeInterval
+        let vol: Float
         switch zone {
-        case .danger: interval = 0.125   // 8次/秒
-        case .warn: interval = 0.33      // 3次/秒
-        case .far: interval = 0.9        // 约1次/秒——"2米外慢慢滴"
+        case .danger: interval = 0.125; vol = 0.45   // 8次/秒
+        case .warn: interval = 0.33; vol = 0.3       // 3次/秒
+        case .far: interval = 0.9; vol = 0.18        // 约1次/秒——"2米外慢慢滴"，最轻
         default: return
         }
-        beeper.tick()
+        beeper.tick(volume: vol)
         beepTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, !self.holding,
                       self.zone == .far || self.zone == .warn || self.zone == .danger else { return }
-                self.beeper.tick()
+                self.beeper.tick(volume: vol)
             }
         }
     }
