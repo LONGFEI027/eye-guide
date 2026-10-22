@@ -51,8 +51,8 @@ final class Beeper {
 
     /// volume 0~1：按档位分级（远档最轻），用户反馈"穿透太强滴得头疼"后整体大降
     func tick(volume: Float = 0.3) {
+        ensure()   // 必须先激活会话再查路由：会话未激活时 currentRoute 会误报成扬声器→永远静音（实测踩坑）
         guard Self.onBluetooth else { return }
-        ensure()
         player.pan = 0
         player.volume = volume
         if let b = buf { player.scheduleBuffer(b, completionHandler: nil) }
@@ -174,7 +174,7 @@ final class Scout: ObservableObject {
             Task { @MainActor in
                 guard let self, self.enabled, self.holding else { return }
                 self.pulse(0.6)
-                self.beeper.tick(volume: 0.15)
+                self.beeper.tick(volume: 0.25)
             }
         }
     }
@@ -240,9 +240,9 @@ final class Scout: ObservableObject {
         let interval: TimeInterval
         let vol: Float
         switch zone {
-        case .danger: interval = 0.125; vol = 0.45   // 8次/秒
-        case .warn: interval = 0.33; vol = 0.3       // 3次/秒
-        case .far: interval = 0.9; vol = 0.18        // 约1次/秒——"2米外慢慢滴"，最轻
+        case .danger: interval = 0.125; vol = 0.65   // 8次/秒
+        case .warn: interval = 0.33; vol = 0.45      // 3次/秒
+        case .far: interval = 0.9; vol = 0.3         // 约1次/秒——"2米外慢慢滴"，最轻
         default: return
         }
         beeper.tick(volume: vol)
