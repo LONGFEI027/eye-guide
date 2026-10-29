@@ -50,6 +50,17 @@ final class Beeper {
     }
 
     /// volume 0~1：按档位分级（远档最轻），用户反馈"穿透太强滴得头疼"后整体大降
+    private lazy var buzzBuf = Self.tone(freq: 150, ms: 140)   // 低频嗡声：骨传导耳机上体感即震动
+
+    /// 耳机"震动"：低频嗡声走蓝牙。骨传导的发声单元本身是震动器，150Hz 贴颧骨=真实震感
+    func buzz(volume: Float) {
+        ensure()   // 先激活会话再查路由（否则未激活时误报扬声器）
+        guard Self.onBluetooth else { return }
+        player.pan = 0
+        player.volume = max(0, min(1, volume))
+        if let b = buzzBuf { player.scheduleBuffer(b, completionHandler: nil) }
+    }
+
     func tick(volume: Float = 0.3) {
         ensure()   // 必须先激活会话再查路由：会话未激活时 currentRoute 会误报成扬声器→永远静音（实测踩坑）
         guard Self.onBluetooth else { return }
@@ -83,6 +94,32 @@ final class Scout: ObservableObject {
     var voiceBusy: (() -> Bool)?
     /// 危险时交给小路用她自己的声音说方向；返回 true=小路会说（本地就不说），false/nil=本地兜底
     var speakViaMoli: ((String) -> Bool)?
+
+    /// 障碍提醒走哪个震动通道：手机马达 / 耳机低频嗡声（骨传导上即震感），语音可切换
+    enum AlertChannel: String { case phone, headset }
+    @Published var alertChannel: AlertChannel =
+        AlertChannel(rawValue: UserDefaults.standard.string(forKey: "scout.alert") ?? "phone") ?? .phone
+
+    func setChannel(_ c: AlertChannel) {
+        alertChannel = c
+        UserDefaults.standard.set(c.rawValue, forKey: "scout.alert")
+        for i in 0..<2 {   // 切完立刻来两下，当场感受新通道
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35 * Double(i)) { [weak self] in
+                self?.alert(1.0)
+            }
+        }
+    }
+
+    private let buzzer = Beeper()
+
+    /// 统一提醒出口：按通道分发；选了耳机但没连蓝牙时自动退回手机震动
+    private func alert(_ intensity: Float) {
+        if alertChannel == .headset, Beeper.onBluetooth {
+            buzzer.buzz(volume: 0.35 + 0.65 * intensity)
+        } else {
+            pulse(intensity)
+        }
+    }
 
     private var hapticEngine: CHHapticEngine?
     private var hapticTimer: Timer?
@@ -149,7 +186,7 @@ final class Scout: ObservableObject {
             say("护航已开启")
             for i in 0..<3 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 * Double(i)) { [weak self] in
-                    self?.pulse(1.0)
+                    self?.alert(1.0)
                 }
             }
         } else {
@@ -169,7 +206,7 @@ final class Scout: ObservableObject {
         holdTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, self.holding else { return }
-                self.pulse(0.5)
+                self.alert(0.5)
             }
         }
     }
@@ -220,12 +257,12 @@ final class Scout: ObservableObject {
         case .far:    interval = 0.9;  intensity = 0.5    // 1.5~2.5米：慢震（替代"2米慢滴"）
         default: return                                   // clear：不震
         }
-        pulse(intensity)
+        alert(intensity)
         hapticTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.enabled, !self.holding,
                       self.zone == .far || self.zone == .warn || self.zone == .danger else { return }
-                self.pulse(intensity)
+                self.alert(intensity)
             }
         }
     }

@@ -55,7 +55,7 @@ enum Brain {
 
     /// 工具使用规则
     static let tools = """
-    【工具的铁律】你有四个工具：look_closely（拍一张高清照片仔细看，比实时画面清楚得多）、set_zoom（切换镜头远近）、set_torch（手电筒）、set_mode（切换工作模式：对方说"陪我走路"用walk、"帮我读字"用read、"帮我找XX"用find并填target、"退出/到了"用chat）。
+    【工具的铁律】你有这些工具：look_closely（拍高清照片仔细看）、set_zoom（镜头远近）、set_torch（手电筒）、set_mode（工作模式："陪我走路"walk、"帮我读字"read、"帮我找XX"find填target、"退出/到了/关闭行走模式"chat）、set_scout（开关护航："打开护航/关闭护航/别震了"）、set_alert_channel（障碍震动走手机还是耳机："切到耳机震动"headset）。对方要开要关什么，必须调对应工具，只口头答应等于没做。
     - 凡是读文字、认标牌、看远处细节，一律先调用 look_closely，拿到结果再回答，不要凭实时画面硬读——实时画面是压缩过的，小字看不清，硬读会读错。
     - 调用 look_closely 前可以说一句"稍等，我仔细看一下"；调用后等结果再开口，按结果说，结果说没看清就如实告诉对方。
     - 远处的东西先 set_zoom 到 2 或 3 拉近，看完记得调回 1；找路和描述环境用 1 或 0.5。

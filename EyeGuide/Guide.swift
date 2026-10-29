@@ -226,6 +226,29 @@ final class Guide: ObservableObject {
                 voice.toolResult(callId: id, output: "已切到\(lens)倍镜头，下一帧画面就是新焦段", speak: false)
             }
 
+        case "set_scout":
+            guard Scout.available else {
+                voice.toolResult(callId: id, output: "这台手机没有激光雷达，用不了护航", speak: true)
+                return
+            }
+            let want = Tools.bool(args["on"])
+            if want != scout.enabled { toggleScout() }
+            voice.toolResult(callId: id, output: want ? "护航已打开" : "护航已关闭", speak: !spoke)
+
+        case "set_alert_channel":
+            let sv = "\(args["channel"] ?? "")".lowercased()
+            let ch: Scout.AlertChannel = (sv.contains("head") || sv.contains("耳")) ? .headset : .phone
+            scout.setChannel(ch)
+            let note: String
+            if ch == .headset {
+                note = Beeper.onBluetooth
+                    ? "已切到耳机震动（低频嗡声），刚震了两下让对方感受"
+                    : "已设为耳机震动，但现在没检测到蓝牙耳机——接上耳机自动生效，这期间先用手机震动兜底"
+            } else {
+                note = "已切回手机震动"
+            }
+            voice.toolResult(callId: id, output: note, speak: !spoke)
+
         case "set_torch":
             let on = Tools.bool(args["on"])
             if scoutActive { arcam.setTorch(on) } else { camera.setTorch(on) }

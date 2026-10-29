@@ -16,10 +16,16 @@ enum Tools {
            "手电筒：画面太暗看不清时打开，离开暗处记得关掉",
            ["on": ["type": "boolean"]], required: ["on"]),
         fn("set_mode",
-           "切换工作模式。walk=行走护送（对方说'陪我走/带我走'时用，你变成安静的护送员，只报重要路况）；read=读字（对方说'帮我读/扫一下文字'时用，App会本地即时朗读看到的文字）；find=找东西（对方说'帮我找XX'时用，必须填target，App本地检测到会直接报方向）；chat=回到自由问答（对方说'到了/不找了/退出'时用）。",
+           "切换工作模式。walk=行走护送（对方说'陪我走/带我走'时用，你变成安静的护送员，只报重要路况）；read=读字（对方说'帮我读/扫一下文字'时用，App会本地即时朗读看到的文字）；find=找东西（对方说'帮我找XX'时用，必须填target，App本地检测到会直接报方向）；chat=回到自由问答（对方说'到了/不找了/退出/关闭行走模式/别跟着了'时用）。",
            ["mode": ["type": "string", "enum": ["walk", "read", "find", "chat"]],
             "target": ["type": "string", "description": "find模式要找的东西，比如'椅子'、'我的水杯'"]],
            required: ["mode"]),
+        fn("set_scout",
+           "开关护航（激光雷达障碍震动提醒）。对方说'打开护航'用on=true；说'关闭护航/别震了/把雷达关了'用on=false。注意：关闭护航不会退出行走模式，退出行走模式用 set_mode chat。",
+           ["on": ["type": "boolean"]], required: ["on"]),
+        fn("set_alert_channel",
+           "障碍提醒的震动走哪个设备：phone=手机震动（手持时用），headset=耳机震动（手机挂胸前、戴骨传导耳机时用，低频嗡声贴着头就是震感）。对方说'切到耳机震动/手机震动'时调用。",
+           ["channel": ["type": "string", "enum": ["phone", "headset"]]], required: ["channel"]),
     ]
 
     private static func fn(_ name: String, _ desc: String, _ props: [String: Any], required: [String] = []) -> [String: Any] {
