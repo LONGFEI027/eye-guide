@@ -101,7 +101,7 @@ private struct RootView: View {
 
     /// 护航开关：激光雷达障碍预警。灰=关，绿=畅通，橙=注意（显示距离），红=危险
     private var scoutButton: some View {
-        Button(action: guide.toggleScout) {
+        Button(action: { guide.toggleScout() }) {
             VStack(spacing: 2) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .font(.system(size: 22, weight: .bold))

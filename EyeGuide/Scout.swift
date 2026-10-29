@@ -183,7 +183,7 @@ final class Scout: ObservableObject {
             try? AVAudioSession.sharedInstance().setAllowHapticsAndSystemSoundsDuringRecording(true)
             ensureEngine()
             zone = .clear
-            say("护航已开启")
+            // 开关播报交给 Guide（小路接通=她说，否则本地兜底）；这里只留物理震动确认
             for i in 0..<3 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 * Double(i)) { [weak self] in
                     self?.alert(1.0)
@@ -195,7 +195,6 @@ final class Scout: ObservableObject {
             holdTimer?.invalidate(); holdTimer = nil
             holding = false
             refDistance = -1; stillSince = nil
-            say("护航已关闭")
         }
     }
 

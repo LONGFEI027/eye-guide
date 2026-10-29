@@ -27,7 +27,6 @@ final class Guide: ObservableObject {
     private var lastRead = ""                    // 读字模式：上一段念过的文字
     private var lastReadAt = Date.distantPast
     private var lastFindCallout = Date.distantPast
-    private var findInformed = false             // 本地首次命中目标后告知她一次
 
     var scoutActive: Bool { scout.enabled && Scout.available }
 
@@ -83,12 +82,20 @@ final class Guide: ObservableObject {
         }
     }
 
-    /// 护航开关（界面按钮/Siri）：切换相机底座 + 障碍引擎
-    func toggleScout() {
+    /// 护航开关（界面按钮/Siri/工具）：切换相机底座 + 障碍引擎。
+    /// announce=false 给工具路径用（toolResult 已让小路播报，避免两个声音）
+    func toggleScout(announce: Bool = true) {
         guard Scout.available else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let on = !scout.enabled
         scout.setEnabled(on)
+        if announce {
+            if voice.live {
+                voice.event(on ? "护航已开启，简短告诉对方一声" : "护航已关闭，简短告诉对方一声", speak: true)
+            } else {
+                LocalVoice.say(on ? "护航已开启" : "护航已关闭")   // 没接通时的唯一兜底
+            }
+        }
         if on {
             camera.wantsSnapshots = false
             camera.stop()
@@ -116,12 +123,12 @@ final class Guide: ObservableObject {
     func setMode(_ m: GuideMode, target: String?) {
         // 退出旧模式的收尾
         if mode == .read { camera.snapshotWidth = 640; arcam.snapshotWidth = 640 }
-        if mode == .find { finder.set(target: nil); findInformed = false }
+        if mode == .find { finder.set(target: nil) }
         mode = m
         // 进入新模式的准备
         switch m {
         case .walk:
-            if Scout.available, !scout.enabled { toggleScout() }   // 行走自动开护航
+            if Scout.available, !scout.enabled { toggleScout(announce: false) }   // 行走自动开护航（模式播报里已带）
         case .read:
             camera.snapshotWidth = 960; arcam.snapshotWidth = 960  // 小字也要看得清
             lastRead = ""
@@ -143,9 +150,11 @@ final class Guide: ObservableObject {
         Task { @MainActor in
             guard self.mode == .read, !self.voice.isBusy,
                   let text = await OCR.read(jpeg), text.count >= 4 else { return }
-            guard OCR.similar(text, self.lastRead) < 0.6 else { return }   // 同一块牌子不重复念
+            guard OCR.similar(text, self.lastRead) < 0.6 else { return }   // 同一段不重复念
             self.lastRead = text
-            LocalVoice.say(String(text.prefix(60)))
+            // 识别仍是本地秒级；朗读交给小路的声音（用户定稿：全程只留她一个声音）
+            self.voice.event("镜头里识别到这段文字，立刻逐字念给对方听，念原文、不解释不概括：\n"
+                             + String(text.prefix(300)), speak: true)
         }
     }
 
@@ -158,11 +167,8 @@ final class Guide: ObservableObject {
             await MainActor.run {
                 guard let self, self.mode == .find else { return }
                 self.lastFindCallout = Date()
-                LocalVoice.say("\(target)，\(hit.direction)")
-                if !self.findInformed {
-                    self.findInformed = true
-                    self.voice.event("本地检测到\(target)在\(hit.direction)，已直接语音提示对方；他走近后你用画面帮他定位最后一步", speak: false)
-                }
+                // 方向播报走小路的声音（用户定稿：一个声音）
+                self.voice.event("本地检测到\(target)在\(hit.direction)，立刻用最短的话告诉对方方向，比如'\(target)，\(hit.direction)'；他走近后你用画面帮他定位最后一步", speak: true)
             }
         }
     }
@@ -232,7 +238,7 @@ final class Guide: ObservableObject {
                 return
             }
             let want = Tools.bool(args["on"])
-            if want != scout.enabled { toggleScout() }
+            if want != scout.enabled { toggleScout(announce: false) }   // toolResult 会让她说，别双报
             voice.toolResult(callId: id, output: want ? "护航已打开" : "护航已关闭", speak: !spoke)
 
         case "set_alert_channel":
