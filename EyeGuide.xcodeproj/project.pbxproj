@@ -184,6 +184,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "小路";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "小路要用相机看见你眼前的环境，才能告诉你周围有什么";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "回答你在哪里需要你的大概位置（只到街区级别）";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "和小路语音对话需要使用麦克风";
@@ -213,6 +214,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "小路";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "小路要用相机看见你眼前的环境，才能告诉你周围有什么";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "回答你在哪里需要你的大概位置（只到街区级别）";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "和小路语音对话需要使用麦克风";
