@@ -24,13 +24,27 @@ private struct RootView: View {
 
     var body: some View {
         ZStack {
-            if guide.scoutActive {
-                // 护航开着：ARKit 原生渲染取景（共用同一个 session，流畅不卡）
+            if guide.scoutActive && guide.mode == .walk {
+                // 行走模式：机器世界——黑底 + LiDAR 三维网格线框（机器理解的世界）
+                MachineWorldView(session: arcam.session)
+                    .ignoresSafeArea()
+            } else if guide.scoutActive {
+                // 护航开着（非行走）：ARKit 原生渲染取景（共用同一个 session，流畅不卡）
                 ARPreviewView(session: arcam.session)
                     .ignoresSafeArea()
             } else {
                 CameraPreviewView(session: camera.session)
                     .ignoresSafeArea()
+            }
+            if guide.scoutActive && guide.mode == .walk {
+                walkHUD.allowsHitTesting(false)   // 大号路况 HUD：低视力可读
+            }
+            if guide.mode == .read, !guide.readBoxes.isEmpty {
+                ReadBoxesOverlay(boxes: guide.readBoxes)   // OCR 命中行高亮：机器正在念哪块字
+                    .allowsHitTesting(false)
+            }
+            if guide.mode == .find, let dir = guide.findDirection {
+                findHUD(dir).allowsHitTesting(false)       // 命中方向大箭头
             }
             LinearGradient(colors: [.black.opacity(0.55), .clear, .clear, .black.opacity(0.65)],
                            startPoint: .top, endPoint: .bottom)
@@ -38,19 +52,12 @@ private struct RootView: View {
                 .allowsHitTesting(false)
 
             VStack(spacing: 14) {
-                HStack(alignment: .top) {
-                    captions
-                    Spacer(minLength: 12)
-                    if voice.live && guide.mode != .chat {
-                        Text(guide.mode.name + "模式")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10).padding(.vertical, 8)
-                            .background(.blue.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
-                            .accessibilityLabel("当前是\(guide.mode.name)模式")
-                    }
+                HStack(alignment: .top, spacing: 8) {
+                    modeBar
+                    Spacer(minLength: 8)
                     if Scout.available { scoutButton }
                 }
+                captions
                 Spacer()
                 statusLine
                 bigButton
@@ -64,12 +71,13 @@ private struct RootView: View {
             guide.startBackend()                             // 按护航状态起对应相机底座
             UIApplication.shared.isIdleTimerDisabled = true  // 出门导览不许锁屏
             // 盲人入口：打开 App 即自动接通（双击图标=一步到位；登录弹窗在时不抢）。
-            // 快速重启时服务器上旧会话可能没断干净导致首连失败，6 秒后自动重试一次
+            // 快速重启时服务器上旧会话可能没断干净导致首连失败，6 秒后自动重试一次。
+            // 例外：Siri"小路读书"冷启动直接进了读书模式——那是离线闭环，不自动拨通
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if !voice.live, !account.needLogin { guide.toggleCall() }
+                if !voice.live, !account.needLogin, guide.mode == .chat { guide.toggleCall() }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 7.5) {
-                if !voice.live, !account.needLogin { guide.toggleCall() }
+                if !voice.live, !account.needLogin, guide.mode == .chat { guide.toggleCall() }
             }
             SelfTest.run(guide)   // 仅 DEBUG：真机自检，结果写 Documents/selftest.json
         }
@@ -97,6 +105,101 @@ private struct RootView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 6)
         .accessibilityHidden(true)   // 内容她都会念出来，VoiceOver 不用重复读字幕
+    }
+
+    /// 模式栏（顶部，和护航排一行）：四个模式独立按钮，当前模式高亮，按一下直接切（读书离线可用）
+    private var modeBar: some View {
+        HStack(spacing: 6) {
+            modeKey(.chat, icon: "bubble.left.and.bubble.right.fill",
+                    hint: "自由问答，问眼前环境、问路、聊天")
+            modeKey(.walk, icon: "figure.walk",
+                    hint: "小路安静护送只报重要路况，自动打开雷达护航")
+            modeKey(.read, icon: "text.viewfinder",
+                    hint: "对准文字自动朗读，本地识别不用联网，期间小路静音")
+            modeKey(.find, icon: "magnifyingglass",
+                    hint: "告诉小路要找什么，慢慢转身，找到会报方向")
+        }
+    }
+
+    private func modeKey(_ m: GuideMode, icon: String, hint: String) -> some View {
+        Button { guide.selectMode(m) } label: {
+            VStack(spacing: 2) {
+                Image(systemName: icon)
+                    .font(.system(size: 22, weight: .bold))
+                Text(m.name)
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(guide.mode == m ? Color.blue.opacity(0.85) : Color.black.opacity(0.45),
+                        in: RoundedRectangle(cornerRadius: 12))
+        }
+        .accessibilityLabel(guide.mode == m ? "当前是\(m.name)模式" : "切换到\(m.name)模式")
+        .accessibilityHint(hint)
+    }
+
+    /// 行走模式的大号路况 HUD：低视力用户隔着半米也能看清。危险=整屏红雾+停+绕行方向；
+    /// 注意=大字距离；畅通=绿色小提示。纯盲用户不靠它（震动+语音是主通道）
+    private var walkHUD: some View {
+        ZStack {
+            if scout.zone == .danger {
+                Color.red.opacity(0.22).ignoresSafeArea()   // 整屏红雾：危险一眼可辨
+            }
+            VStack(spacing: 2) {
+                switch scout.zone {
+                case .danger:
+                    Text("停")
+                        .font(.system(size: 110, weight: .black))
+                        .foregroundStyle(.red)
+                    Text(scout.detourDeg > 15 ? "往右绕 →" : (scout.detourDeg < -15 ? "← 往左绕" : "前方受阻"))
+                        .font(.system(size: 40, weight: .heavy))
+                        .foregroundStyle(.white)
+                case .warn, .far:
+                    Text(String(format: "%.1f", scout.distance))
+                        .font(.system(size: 96, weight: .black))
+                        .foregroundStyle(scout.zone == .warn ? .orange : .teal)
+                    + Text(" 米")
+                        .font(.system(size: 40, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                case .clear:
+                    Text("畅通")
+                        .font(.system(size: 56, weight: .heavy))
+                        .foregroundStyle(.green.opacity(0.85))
+                case .off:
+                    EmptyView()
+                }
+            }
+            .shadow(color: .black.opacity(0.8), radius: 6)
+        }
+        .animation(.easeOut(duration: 0.15), value: scout.zone)
+        .accessibilityHidden(true)   // 震动和语音已覆盖，VoiceOver 不重复
+    }
+
+    /// 找东西命中 HUD：大箭头 + 目标名·方向（命中后亮 2 秒多，低视力一眼可辨）
+    private func findHUD(_ dir: String) -> some View {
+        VStack(spacing: 4) {
+            if let arrow = Self.findArrow(dir) {
+                Text(arrow)
+                    .font(.system(size: 120, weight: .black))
+                    .foregroundStyle(.green)
+            }
+            Text("\(guide.finder.target ?? "目标") · \(dir)")
+                .font(.system(size: 30, weight: .heavy))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+        .shadow(color: .black.opacity(0.8), radius: 6)
+        .transition(.opacity)
+        .animation(.easeOut(duration: 0.2), value: dir)
+        .accessibilityHidden(true)   // 方向已经语音报过，VoiceOver 不重复
+    }
+
+    private static func findArrow(_ dir: String) -> String? {
+        if dir.contains("十点") { return "↖" }
+        if dir.contains("两点") { return "↗" }
+        if dir.hasPrefix("正前方") && dir.count <= 4 { return "↑" }
+        return nil   // "正前方一带，慢慢转一下…"这类长提示只显示文字
     }
 
     /// 护航开关：激光雷达障碍预警。灰=关，绿=畅通，橙=注意（显示距离），红=危险
@@ -181,6 +284,33 @@ private struct RootView: View {
                     in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .accessibilityLabel(voice.live ? "结束对话" : "开始对话")
         .accessibilityHint(voice.live ? "挂断小路" : "接通小路，她会帮你看眼前的环境，直接开口问就行")
+    }
+}
+
+/// 读书模式的 OCR 高亮框：把 Vision 归一化框（原点左下，相对 3:4 竖图）
+/// 映射到 aspect-fill 铺满屏幕的取景上。帧照片 1 秒一张，框有半拍延迟，读字时手机基本端稳，够用
+private struct ReadBoxesOverlay: View {
+    let boxes: [CGRect]
+
+    var body: some View {
+        GeometryReader { geo in
+            let W = geo.size.width, H = geo.size.height
+            // 相机帧转正后是 3:4 竖图，预览按 aspect-fill 撑满屏幕
+            let scale = max(W / 3, H / 4)
+            let dispW = 3 * scale, dispH = 4 * scale
+            let offX = (W - dispW) / 2, offY = (H - dispH) / 2
+            ForEach(Array(boxes.enumerated()), id: \.offset) { _, b in
+                let w = b.width * dispW, h = b.height * dispH
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color.yellow.opacity(0.9), lineWidth: 2)
+                    .background(Color.yellow.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
+                    .frame(width: w, height: h)
+                    .position(x: offX + b.minX * dispW + w / 2,
+                              y: offY + (1 - b.maxY) * dispH + h / 2)
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.easeOut(duration: 0.25), value: boxes)
     }
 }
 

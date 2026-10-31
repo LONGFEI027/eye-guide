@@ -41,6 +41,11 @@ final class VoiceLink: NSObject, ObservableObject {
     /// 她正在说话或正在生成回复
     var isBusy: Bool { active || audio.speaking || !pendingCreates.isEmpty }
 
+    /// 读书模式：她全程硬静音（语音输出直接丢弃，工具调用照常）；开启瞬间打断正在播的话
+    var muted = false {
+        didSet { if muted, !oldValue { audio.hush() } }
+    }
+
     /// 镜头画面给模型看（每秒一张）：随你下一句话一起提交进对话，她就"看得见"了
     func sendImage(_ jpeg: Data) {
         guard ready, audioSent else { return }
@@ -187,7 +192,7 @@ final class VoiceLink: NSObject, ObservableObject {
         case "session.updated":
             if !ready {
                 ready = true; live = true; status = ""
-                say(note: "（系统提示，对方看不见屏幕：语音刚接通，你是视觉助手小路，用不超过15个字打个招呼说你在、让对方把手机镜头朝前，别提\"系统\"）")
+                say(note: "（App提示：语音刚接通。先向对方说：欢迎回来，有什么可以帮到您？然后听他的需求；需求对应行走/读书/找东西某个模式时，先问一句\"要进入XX模式吗？\"，他肯定答复后再调用 set_mode 切换）")
             }
 
         case "input_audio_buffer.speech_started":
@@ -237,7 +242,7 @@ final class VoiceLink: NSObject, ObservableObject {
             if !dropResp { onCaption?(botText) }
 
         case "response.audio.delta":
-            guard !dropResp, let b64 = d["delta"] as? String, let pcm = Data(base64Encoded: b64) else { return }
+            guard !dropResp, !muted, let b64 = d["delta"] as? String, let pcm = Data(base64Encoded: b64) else { return }
             if turn != .idle { turn = .idle }
             audio.play(pcm)
 

@@ -27,6 +27,18 @@ struct ToggleScoutIntent: AppIntent {
     }
 }
 
+struct ToggleReadIntent: AppIntent {
+    static var title: LocalizedStringResource = "切换读书"
+    static var description = IntentDescription("开启或关闭读书模式（离线可用，自动朗读镜头里的文字）")
+    static var openAppWhenRun: Bool = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        Guide.shared.toggleRead()
+        return .result()
+    }
+}
+
 struct XiaoluShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: StartTalkIntent(),
@@ -37,5 +49,9 @@ struct XiaoluShortcuts: AppShortcutsProvider {
         AppShortcut(intent: ToggleScoutIntent(),
                     phrases: ["\(.applicationName)护航", "\(.applicationName)开护航", "\(.applicationName)关护航"],
                     shortTitle: "护航", systemImageName: "dot.radiowaves.left.and.right")
+        AppShortcut(intent: ToggleReadIntent(),
+                    phrases: ["\(.applicationName)读书", "\(.applicationName)开读书", "\(.applicationName)关读书", "用\(.applicationName)读书",
+                              "\(.applicationName)读字", "\(.applicationName)开读字", "\(.applicationName)关读字"],
+                    shortTitle: "读书", systemImageName: "text.viewfinder")
     }
 }

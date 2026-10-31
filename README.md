@@ -1,42 +1,50 @@
 # 小路 EyeGuide
 
-视障用户的随身视觉助手（原型）：手机后置摄像头 + 百炼实时多模态模型，语音对话帮你"看"。
+视障用户的随身视觉助手（iOS）：后置摄像头 + 实时多模态大模型 + 激光雷达，语音对话帮你"看"。
 
-**定位（写进了人格，不可动摇）**：白手杖的智能补充，不是导盲设备。安全层（避障、台阶、车流）永远属于盲杖和用户自己的听觉；小路只做语义层——读牌、找东西、描述环境，并且不确定就直说不确定。
+> **定位（写进了人格，不可动摇）**：小路是**白手杖的智能补充，不是导盲设备**。
+> 脚下安全永远属于盲杖和用户自己的听觉；小路负责语义层——读牌、找东西、描述环境、障碍预警作参考，不确定就直说不确定。
 
-## 三个核心场景
+## 功能
 
-| 场景 | 用法 | 背后 |
+打开 App 即自动接通，小路开口"欢迎回来，有什么可以帮到您？"——全程动口不动手。界面同时提供四个大按钮模式（当前高亮），低视力用户与旁边的帮助者可视可点：
+
+| 模式 | 交互 | 实现 |
 |---|---|---|
-| 读字 | "这站牌写的什么" | `look_closely` 工具拍高清照片 → 服务器 /api/vision（qwen-vl）逐字读 |
-| 找东西 | "帮我找个空座" | 每秒一帧实时画面，钟面方向引导（十二点=正前方） |
-| 说环境 | "周围什么样" | 实时帧 + 粗定位（街区级），两三句说重点 |
+| **聊天** | 直接开口问眼前环境、问路、读牌 | 每秒一帧实时画面给模型；`look_closely` 拍高清照细看（读字类问题先走本地 OCR 快路径，亚秒级） |
+| **行走** | "陪我走路"，她变成安静的护送员，只报重要路况 | 自动开启护航；屏幕切换为**机器世界**——黑底 + LiDAR 实时三维网格线框 + 大号路况 HUD（距离大字 / 停 / 左右绕行箭头 / 危险红雾） |
+| **读书** | 对准文字自动朗读，**离线可用**，期间大模型被硬静音 | 本地 Vision OCR + 系统 TTS 闭环，不上传、不发帧、不耗流量；画面上黄框高亮正在念的文字 |
+| **找东西** | "帮我找水杯"，慢慢转身，命中报钟面方向 | 本地分类器三分窗检测（词表外由大模型看画面兜底）；命中时大箭头 HUD + 语音同步报向 |
 
-## 技术管线（复用 photo-coach）
+**护航**（独立安全层，右上角开关）：激光雷达持续盯正前方，障碍越近震动越急，支持切蓝牙耳机低频嗡声；默认关闭，行走模式自动开、退出自动收回，手动打开的不受模式切换影响。危险时若小路在线，由她的声音报绕行方向，本地播报兜底——震动永远是第一通道，她慢半拍也拦得住。
 
-- 实时语音：`VoiceLink` → wss://feizhu.asia/realtime（qwen3.8-omni-flash-realtime，音色 Serena），server_vad + 客户端决定回复时机，AEC 回声消除、回声转写过滤、回复排队，全套照搬 photo-coach 已验证的实现
-- 画面：`CameraManager` 每秒一帧 640px JPEG `input_image_buffer.append`（须先发音频）
-- 工具（刻意只有三个）：`look_closely`（高清细看/OCR）、`set_zoom`（0.5/1/2/3）、`set_torch`（手电筒）
-- 账号：feizhu.asia 登录 Cookie，用量同一账户
+**Siri 一句话入口**（盲人不用摸屏幕）："小路开始对话" / "小路护航" / "小路读书"（读书可冷启动直达，不连大模型）。
+
+**防干扰设计**：每个模式里"谁能出声"是定死的——读书=只有本地朗读；找东西=本地播报让路给她；行走=她只报路况、距离归震动；她从聊天里猜你想切模式必须先反问确认，按按钮切换则直接生效。
+
+## 技术架构
+
+- **实时语音**：`VoiceLink` → WebSocket 实时桥（qwen3.8-omni-flash-realtime，音色 Serena），server_vad、AEC 回声消除、回复排队、变速不变调 +15% 语速
+- **相机双底座**：护航开 = ARKit（LiDAR 深度 + 位姿 → `Rover` 体素栅格障碍引擎，Mobilio 式护航）；护航关 = AVFoundation（光学变焦）
+- **本地即时层**（不经过大模型）：护航震动、读书 OCR 朗读、找东西分类器——断网也能用
+- **工具调用**：`look_closely` / `set_mode` / `set_zoom` / `set_torch` / `set_scout` / `set_alert_channel`
 
 ## 构建
 
-```bash
-xcodebuild -project EyeGuide.xcodeproj -scheme EyeGuide \
-  -destination 'generic/platform=iOS Simulator' build
-```
-
-真机（iPhone zhu）：
+需要 Xcode 16+，真机建议带激光雷达的 iPhone Pro 系列（无 LiDAR 机型自动隐藏护航）。
 
 ```bash
 xcodebuild -project EyeGuide.xcodeproj -scheme EyeGuide \
-  -destination 'id=00008120-000C1D2E3E60201E' \
-  DEVELOPMENT_TEAM=G8R46MT3M7 -allowProvisioningUpdates build
-xcrun devicectl device install app --device DAD9E1A3 <DerivedData里的EyeGuide.app>
+  -destination 'generic/platform=iOS' \
+  DEVELOPMENT_TEAM=<你的TeamID> -allowProvisioningUpdates build
 ```
 
-## 下一步（按验证优先级）
+**后端说明**：语音与视觉接口走作者的茉兔服务器（`Config.swift` 中的 `feizhu.asia`），需要账号。自部署请实现同协议的实时桥（百炼 omni realtime 的 WebSocket 转发 + `/api/auth/login`、`/api/me`、`/api/vision` 三个接口），改 `Config.apiBase` 即可。
 
-1. 真机跑通三场景，自己蒙眼先测
-2. 找 2~3 位真实视障用户试用访谈（残联/盲协渠道）
-3. 用户说有用再考虑：持续播报模式、骨传导耳机适配、胸前固定支架、本地深度/障碍提示（安全层，不走大模型）
+## 免责声明
+
+本项目为原型软件，按"现状"提供，不构成医疗或安全设备。使用时务必保留白手杖等常规出行辅助，复杂路况请以自身判断和专业辅助为准。
+
+## 许可证
+
+[MIT](LICENSE)

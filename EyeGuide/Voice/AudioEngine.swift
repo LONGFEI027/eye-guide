@@ -14,6 +14,11 @@ final class AudioEngine: ObservableObject {
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let timePitch: AVAudioUnitTimePitch = {
+        let t = AVAudioUnitTimePitch()
+        t.rate = 1.15   // 她的语速 +15%（变速不变调）；1.0 = 原速
+        return t
+    }()
     private var converter: AVAudioConverter?
     private let micFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
     private let playFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
@@ -29,6 +34,7 @@ final class AudioEngine: ObservableObject {
         try session.setActive(true)
 
         engine.attach(player)
+        engine.attach(timePitch)
         do {
             try engine.inputNode.setVoiceProcessingEnabled(true)   // 回声消除（AEC）真正的开关
             aecOn = true
@@ -36,7 +42,8 @@ final class AudioEngine: ObservableObject {
             aecOn = false
             print("[小路] 回声消除启用失败，退化为普通采集：\(error)")
         }
-        engine.connect(player, to: engine.mainMixerNode, format: playFormat)
+        engine.connect(player, to: timePitch, format: playFormat)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: playFormat)
 
         let inFormat = engine.inputNode.outputFormat(forBus: 0)
         converter = AVAudioConverter(from: inFormat, to: micFormat)

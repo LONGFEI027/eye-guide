@@ -5,14 +5,14 @@ import AVFoundation
 enum GuideMode: String {
     case chat   // 自由问答（默认）
     case walk   // 行走护送：她当安静的护送员，重要路况才开口
-    case read   // 读字：App 本地即时朗读（不经过大模型）
+    case read   // 读书：App 本地即时朗读（不经过大模型，期间小路静音）
     case find   // 找东西：App 本地检测目标报钟面方向
 
     var name: String {
         switch self {
         case .chat: return "聊天"
         case .walk: return "行走"
-        case .read: return "读字"
+        case .read: return "读书"
         case .find: return "找东西"
         }
     }

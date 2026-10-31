@@ -1,6 +1,7 @@
 import Foundation
 import ARKit
 import SceneKit
+import RealityKit
 import SwiftUI
 import UIKit
 import AVFoundation
@@ -39,6 +40,9 @@ final class ARCam: NSObject, ObservableObject, ARSessionDelegate {
         let cfg = ARWorldTrackingConfiguration()
         cfg.frameSemantics = .sceneDepth
         cfg.planeDetection = []
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            cfg.sceneReconstruction = .mesh   // LiDAR 实时三维网格：行走模式的"机器世界"线框就画它
+        }
         session.delegateQueue = arQueue           // 帧回调直接走后台队列
         session.delegate = self
         session.run(cfg, options: [.resetTracking])
@@ -175,4 +179,23 @@ struct ARPreviewView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARSCNView, context: Context) {}
+}
+
+/// 行走模式的"机器世界"：关掉相机画面，黑底上实时勾出 LiDAR 构建的三维网格线框——
+/// 机器理解中的世界。给低视力用户（高对比）、旁边的帮助者和演示看；
+/// 纯盲用户的主通道仍是震动+语音，这里只是把"机器看到了什么"亮出来。
+struct MachineWorldView: UIViewRepresentable {
+    let session: ARSession
+
+    func makeUIView(context: Context) -> ARView {
+        let v = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
+        v.session = session
+        v.environment.background = .color(.black)          // 不要相机画面，只要机器的世界
+        v.debugOptions = [.showSceneUnderstanding]         // LiDAR 网格线框
+        v.renderOptions = [.disableMotionBlur, .disableDepthOfField, .disableHDR,
+                           .disableFaceMesh, .disablePersonOcclusion, .disableGroundingShadows]
+        return v
+    }
+
+    func updateUIView(_ uiView: ARView, context: Context) {}
 }

@@ -6,7 +6,15 @@ import UIKit
 /// look_closely 的快路径：牌子上字够多就直接把 OCR 原文交给她读，
 /// 省掉"上传→云端视觉模型"的好几秒；字太少或要"理解画面"时仍走云端。
 enum OCR {
-    static func read(_ jpeg: Data) async -> String? {
+    /// 识别结果：全文 + 每行文字的框（Vision 归一化坐标，原点左下，相对识别图）
+    struct Reading {
+        let text: String
+        let boxes: [CGRect]
+    }
+
+    static func read(_ jpeg: Data) async -> String? { await readDetailed(jpeg)?.text }
+
+    static func readDetailed(_ jpeg: Data) async -> Reading? {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
                 guard let img = UIImage(data: jpeg)?.cgImage else { cont.resume(returning: nil); return }
@@ -16,12 +24,10 @@ enum OCR {
                 req.usesLanguageCorrection = true
                 let handler = VNImageRequestHandler(cgImage: img, options: [:])
                 guard (try? handler.perform([req])) != nil else { cont.resume(returning: nil); return }
-                let lines = (req.results ?? [])
-                    .compactMap { $0.topCandidates(1).first }
-                    .filter { $0.confidence > 0.3 }
-                    .map { $0.string }
+                let accepted = (req.results ?? []).filter { ($0.topCandidates(1).first?.confidence ?? 0) > 0.3 }
+                let lines = accepted.compactMap { $0.topCandidates(1).first?.string }
                 let text = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                cont.resume(returning: text.isEmpty ? nil : text)
+                cont.resume(returning: text.isEmpty ? nil : Reading(text: text, boxes: accepted.map(\.boundingBox)))
             }
         }
     }

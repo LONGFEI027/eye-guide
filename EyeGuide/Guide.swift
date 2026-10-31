@@ -14,6 +14,8 @@ final class Guide: ObservableObject {
     @Published var botLine = ""      // 她正在说的（字幕）
     @Published var looking = false   // 正在拍照细看
     @Published var mode: GuideMode = .chat
+    @Published var readBoxes: [CGRect] = []   // 读书：OCR 命中行的框（Vision 归一化坐标，叠在取景上）
+    @Published var findDirection: String?     // 找东西：最近一次命中方向（HUD 大箭头，短暂显示）
 
     let voice = VoiceLink()
     let camera = CameraManager()
@@ -28,6 +30,7 @@ final class Guide: ObservableObject {
     private var lastReadAt = Date.distantPast
     private var lastFindCallout = Date.distantPast
     private var findInformed = false             // 本地首次命中目标后告知她一次
+    private var scoutAutoOn = false              // 护航是行走模式代开的（退出行走自动收回）；手动开的不动
 
     var scoutActive: Bool { scout.enabled && Scout.available }
 
@@ -35,7 +38,11 @@ final class Guide: ObservableObject {
         camera.onSnapshot = { [weak self] jpeg in self?.handleSnapshot(jpeg) }
         arcam.onSnapshot = { [weak self] jpeg in self?.handleSnapshot(jpeg) }
         arcam.onObstacle = { [weak self] inst, out in self?.scout.update(instant: inst, rover: out) }
-        voice.onCaption = { [weak self] t in self?.botLine = t }
+        voice.onCaption = { [weak self] t in
+            guard let self else { return }
+            self.botLine = t
+            if self.mode == .find { LocalVoice.hush() }   // 找东西模式她开口，本地播报让路（读书模式她是静音的）
+        }
         voice.onUserText = { [weak self] t in self?.userLine = t }
         voice.onToolCall = { [weak self] name, args, id, spoke in self?.tool(name, args, id, spoke) }
         voice.onNeedLogin = { [weak self] in self?.account.needLogin = true }
@@ -47,9 +54,9 @@ final class Guide: ObservableObject {
             self.voice.event(note, speak: true)
             return true
         }
-        if scout.enabled, Scout.available {
-            scout.setEnabled(true)   // 上次开着就续上（底座在 startBackend 里起）
-        }
+        // 护航默认关：每次启动都从关开始，只在行走模式自动开、或用户明确要求才开
+        // （直接改 enabled 不走 setEnabled，避免启动时播"护航已关闭"）
+        if scout.enabled { scout.enabled = false }
     }
 
     /// App 启动时由界面调用：按护航状态起对应的相机底座
@@ -58,7 +65,7 @@ final class Guide: ObservableObject {
     }
 
     private func handleSnapshot(_ jpeg: Data) {
-        voice.sendImage(jpeg)
+        if mode != .read { voice.sendImage(jpeg) }   // 读字是本地闭环：不发帧（省流量防插话），她要看画面用 look_closely
         switch mode {
         case .read: readTick(jpeg)
         case .find: findTick(jpeg)
@@ -83,9 +90,10 @@ final class Guide: ObservableObject {
         }
     }
 
-    /// 护航开关（界面按钮/Siri）：切换相机底座 + 障碍引擎
+    /// 护航开关（界面按钮/Siri/set_scout/模式自动）：切换相机底座 + 障碍引擎
     func toggleScout() {
         guard Scout.available else { return }
+        scoutAutoOn = false   // 默认当作手动操作；行走模式代开的在 setMode 里改回 true
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         let on = !scout.enabled
         scout.setEnabled(on)
@@ -103,6 +111,66 @@ final class Guide: ObservableObject {
         voice.refreshInstructions(instructions())
     }
 
+    /// 读书开关（界面按钮/Siri）：本地 OCR + 本地朗读的离线闭环，不用接通小路、不耗流量；
+    /// 接通状态下进读书 = 小路硬静音（setMode 里统一管）
+    func toggleRead() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if mode == .read {
+            setMode(.chat, target: nil)
+            if !voice.live {
+                camera.wantsSnapshots = false
+                arcam.wantsSnapshots = false
+            }
+            LocalVoice.say("读书已关闭")
+        } else {
+            setMode(.read, target: nil)
+            startBackend()
+            if scoutActive { arcam.wantsSnapshots = true } else { camera.wantsSnapshots = true }
+            if voice.live {
+                voice.event("对方手动打开了读书模式，你已被静音，只在对方明确说退出读书时调用 set_mode 切回 chat", speak: false)
+            }
+            LocalVoice.say("读书已开启，把手机对准要读的东西")
+        }
+    }
+
+    /// 模式栏（界面按钮）：四个模式独立直切，按钮是明确动作不用小路确认。
+    /// 本地声音负责即时反馈，小路只被静默告知（避免两个声音抢着宣布）
+    func selectMode(_ m: GuideMode) {
+        guard m != mode else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        switch m {
+        case .read:
+            toggleRead()   // 复用读书逻辑（离线闭环 + 播报）
+        case .chat:
+            setMode(.chat, target: nil)
+            if !voice.live {
+                camera.wantsSnapshots = false
+                arcam.wantsSnapshots = false
+            } else {
+                voice.event("对方按按钮回到了聊天模式", speak: false)
+            }
+            LocalVoice.say("已回到聊天模式")
+        case .walk:
+            setMode(.walk, target: nil)   // 行走自动开护航（setMode 里）
+            startBackend()
+            if voice.live {
+                if scoutActive { arcam.wantsSnapshots = true } else { camera.wantsSnapshots = true }
+                voice.event("对方按按钮进入了行走模式，你按行走模式的规矩当安静的护送员", speak: false)
+            }
+            LocalVoice.say(voice.live ? "行走模式已开启" : "行走模式已开启，没接通小路，只有雷达震动提醒")
+        case .find:
+            // 先进模式（按钮立刻高亮），目标由小路问出来再补（set_mode find + target 会重进一次）
+            setMode(.find, target: nil)
+            startBackend()
+            if voice.live {
+                if scoutActive { arcam.wantsSnapshots = true } else { camera.wantsSnapshots = true }
+                voice.event("对方按按钮进入了找东西模式：问他要找什么，拿到目标后调用 set_mode find 并带上 target", speak: true)
+            } else {
+                LocalVoice.say("已选找东西，请按下方的开始按钮接通小路，再告诉她要找什么")
+            }
+        }
+    }
+
     /// 位置解析出来后刷新她的上下文
     func placeChanged() { voice.refreshInstructions(instructions()) }
 
@@ -115,16 +183,22 @@ final class Guide: ObservableObject {
 
     func setMode(_ m: GuideMode, target: String?) {
         // 退出旧模式的收尾
-        if mode == .read { camera.snapshotWidth = 640; arcam.snapshotWidth = 640 }
-        if mode == .find { finder.set(target: nil); findInformed = false }
+        if mode == .read { camera.snapshotWidth = 640; arcam.snapshotWidth = 640; readBoxes = [] }
+        if mode == .find { finder.set(target: nil); findInformed = false; findDirection = nil }
+        if mode == .walk, m != .walk, scoutAutoOn, scout.enabled { toggleScout() }   // 行走代开的护航，出行走自动收回（手动开的不动）
         mode = m
+        voice.muted = (m == .read)   // 读书模式她硬静音，唯一的声音是本地朗读
         // 进入新模式的准备
         switch m {
         case .walk:
-            if Scout.available, !scout.enabled { toggleScout() }   // 行走自动开护航
+            if Scout.available, !scout.enabled {
+                toggleScout()        // 行走自动开护航
+                scoutAutoOn = true   // 标记为代开：退出行走时自动收回
+            }
         case .read:
             camera.snapshotWidth = 960; arcam.snapshotWidth = 960  // 小字也要看得清
             lastRead = ""
+            lastReadAt = Date().addingTimeInterval(2)   // 先让"读书已开启"的开场白说完，4 秒后才开始念
         case .find:
             finder.set(target: target)
             lastFindCallout = .distantPast
@@ -142,10 +216,11 @@ final class Guide: ObservableObject {
         lastReadAt = Date()
         Task { @MainActor in
             guard self.mode == .read, !self.voice.isBusy,
-                  let text = await OCR.read(jpeg), text.count >= 4 else { return }
-            guard OCR.similar(text, self.lastRead) < 0.6 else { return }   // 同一块牌子不重复念
-            self.lastRead = text
-            LocalVoice.say(String(text.prefix(60)))
+                  let r = await OCR.readDetailed(jpeg), r.text.count >= 4 else { return }
+            self.readBoxes = r.boxes                                         // 高亮框每轮都刷新（画面会动）
+            guard OCR.similar(r.text, self.lastRead) < 0.6 else { return }   // 同一块牌子不重复念
+            self.lastRead = r.text
+            LocalVoice.say(String(r.text.prefix(60)))
         }
     }
 
@@ -158,6 +233,11 @@ final class Guide: ObservableObject {
             await MainActor.run {
                 guard let self, self.mode == .find else { return }
                 self.lastFindCallout = Date()
+                self.findDirection = hit.direction
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self] in
+                    guard let self, Date().timeIntervalSince(self.lastFindCallout) > 2.2 else { return }
+                    self.findDirection = nil   // 命中提示只亮一阵，过期自动熄
+                }
                 LocalVoice.say("\(target)，\(hit.direction)")
                 if !self.findInformed {
                     self.findInformed = true
@@ -209,13 +289,14 @@ final class Guide: ObservableObject {
             let note: String
             switch m {
             case .walk: note = "已进入行走模式（护航雷达已开）。简短告诉对方可以走了，路上你会提醒重要路况"
-            case .read: note = "已进入读字模式，App会自动朗读镜头里的文字。简短告诉对方把手机对准要读的东西"
+            case .read: note = "已进入读书模式：你已被静音，App 在本地朗读镜头文字并已语音告知对方。不要生成回复；只有对方明确说'不读了/退出读书'时调用 set_mode 切回 chat"
             case .find: note = finder.localDetect
                 ? "已进入找东西模式（本地检测：\(target!)）。简短告诉对方举稳手机慢慢原地转一圈，检测到会直接报方向"
                 : "已进入找东西模式（目标：\(target!)，本地不认识这个词，由你看画面找）。简短告诉对方慢慢转身让你看"
             case .chat: note = "已回到聊天模式，简短说一句即可"
             }
-            voice.toolResult(callId: id, output: note, speak: true)
+            if m == .read { LocalVoice.say("读书已开启，把手机对准要读的东西") }   // 她静音了，开场白由本地声音说
+            voice.toolResult(callId: id, output: note, speak: m != .read)
 
         case "set_zoom":
             if scoutActive {
